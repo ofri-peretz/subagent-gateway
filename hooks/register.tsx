@@ -301,7 +301,10 @@ export const register: Register = on => {
 
         return last < 0 ? list : list.map((one, i) => (i === last ? { ...one, saved: addSaving(one.saved ?? NO_SAVING, saving) } : one))
       })
-      const updated = addToDays(await read($, days), dateOf(now), saving, byWorker)
+      // Other sessions write the same store: merge into what it holds now, not this session's copy.
+      const stored = await $.store.get(DAYS_KEY).catch(() => undefined)
+      const base = Array.isArray(stored) ? (stored as Day[]) : await read($, days)
+      const updated = addToDays(base, dateOf(now), saving, byWorker)
       await update($, days, () => updated)
       await $.store.set(DAYS_KEY, updated).catch(() => null)
     }

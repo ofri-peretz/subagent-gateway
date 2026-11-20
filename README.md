@@ -104,6 +104,7 @@ claude plugin test .
 
 ## Changes
 
+- **0.5.1:** savings from several open sessions add up, where the last session to write used to overwrite the others.
 - **0.5.0:** the Agents view: a live tree of every running agent, nested sub-agents and teammates, opened from the band's chip.
 - **0.4.0:** Read-only enforcement for the workers; token and time savings per prompt, per day and all time; usage-limit forecast; a Savings pane with the running subagents; fixes for a prefix carrying over to later turns and for subagent effort not being applied; a simpler band.
 - **0.3.0:** Haiku workers, compact button, running-subagent chip.

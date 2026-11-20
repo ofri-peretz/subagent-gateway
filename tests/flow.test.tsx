@@ -62,14 +62,19 @@ const engine = (on: any) => {
     return { text: '' }
   })
   on('tool.call', () => ({ result: {} }))
-  on('store.set', () => ({ value: undefined }))
+  let stored: unknown
+  on('store.get', () => ({ value: stored }))
+  on('store.set', (_: unknown, e: any) => {
+    stored = e.value
+    return { value: undefined }
+  })
   const opened: string[] = []
   on('ui.open', (_: unknown, e: any) => {
     opened.push(e.id)
     return { value: { isPlaced: true } }
   })
 
-  return { advance: (ms: number) => (now += ms), opened }
+  return { advance: (ms: number) => (now += ms), opened, store: { get: () => stored, set: (value: unknown) => (stored = value) } }
 }
 
 test('a running worker shows in the band and the pane, and leaves both when it finishes', async ($, on) => {
@@ -231,4 +236,17 @@ test('a routed subagent runs at the effort its route chose', async ($, on) => {
   for await (const _ of stream) {
   }
   expect(efforts).toEqual(['medium'])
+})
+
+test('savings add to what other sessions stored, not only this session', async ($, on) => {
+  const clock = engine(on)
+  const today = new Date(NOW)
+  const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  clock.store.set([{ date, kept: 50_000, ms: 0, byWorker: { Explore: 50_000 } }])
+  const worker = await $.agent.spawn(spawn('subagent-gateway:log-reader'))
+  clock.advance(1_000)
+  await $.turn.complete(done(worker.agentId, { input_tokens: 0, cache_creation_input_tokens: 11_000 }))
+  await $.turn.complete(done(undefined))
+
+  expect(clock.store.get()).toEqual([{ date, kept: 60_000, ms: 200, byWorker: { Explore: 50_000, 'log-reader': 10_000 } }])
 })
