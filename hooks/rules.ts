@@ -1,6 +1,6 @@
 // The routing, safety and savings rules: pure, so the tests can call them directly.
 
-import type { Day, Saving } from '../types'
+import type { Day, Tally } from '../types'
 
 export type Effort = 'low' | 'medium' | 'high'
 // effort absent: keep the session's effort.
@@ -28,7 +28,16 @@ const AGENT_MODELS: Record<string, string> = {
   'general-purpose': 'sonnet',
 }
 
-export function routeAgent(type: string): Route | null {
+// A task that only asks to look: Haiku reads as well as Sonnet and costs a fraction.
+// Any word about changing something keeps it on Sonnet.
+const LOOK_WORDS = /\b(find|search|where|list|locate|look up|summari[sz]e|read|which|grep|show)\b/i
+const CHANGE_WORDS = /\b(edit|fix|write|implement|change|update|refactor|add|remove|delete|create|commit|push|rename|migrate|build|install|run)\b/i
+// "Do not edit any file" is a look-only task: a clause after a negation is not a change asked for.
+const NEGATED = /\b(do not|don't|must not|never|without|not)\b[^.\n]*/gi
+export const isLookOnly = (task: string) => LOOK_WORDS.test(task) && !CHANGE_WORDS.test(task.replace(NEGATED, ''))
+
+export function routeAgent(type: string, task = ''): Route | null {
+  if (type === 'general-purpose' && isLookOnly(task)) return { model: 'haiku', effort: 'medium', rule: 'look-only task' }
   const model = AGENT_MODELS[type]
 
   return model ? { model, effort: 'medium', rule: `agent type ${type}` } : null
@@ -42,7 +51,7 @@ export const WORKERS = [
   {
     name: 'repo-searcher',
     description:
-      'Finds files, usages, definitions and specs in the repository and reports paths with line numbers. Use for any search across more than a couple of files. Read-only.',
+      'Use first for any search: finding files, usages, definitions or specs across the repository, instead of reading them in the main conversation. Reports path:line with a short note. Read-only.',
     prompt:
       'Search the repository for what you are asked. Report each match as path:line with a one-line note. Do not edit files. Keep the report short: no file dumps.',
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
@@ -52,7 +61,7 @@ export const WORKERS = [
   {
     name: 'log-reader',
     description:
-      'Reads test output, CI and Cypress logs and reports each failing case: file, test name and first error line. Use after a test run or when given a log file or URL. Read-only.',
+      'Use first for any log: test output, CI or Cypress logs, a log file or URL. Reports each failing case with its file, test name and first error line. Read-only.',
     prompt:
       'Read the logs you are given. For each failure, report the file, the test name and the first error line. Do not edit files. Keep the report short.',
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
@@ -62,7 +71,7 @@ export const WORKERS = [
   {
     name: 'test-runner',
     description:
-      'Runs a Cypress spec, a Postman/Newman collection or another test command and reports pass or fail, with the first error of each failure. Use whenever tests need to run and only the result matters. Never edits files.',
+      'Use first whenever tests need to run and only the result matters: Vitest, Jest, Cypress, Newman or npm test. Reports totals and the first error of each failure. Never edits files.',
     prompt:
       'Run the tests you are asked to run, once, with the command you are given or the project\'s usual one. Report the totals, then each failing test with its file and first error line. Do not edit files and do not try to fix anything. Keep the report short: no full output.',
     tools: ['Bash', 'Read', 'Grep', 'Glob'],
@@ -72,7 +81,7 @@ export const WORKERS = [
   {
     name: 'docs-reader',
     description:
-      'Fetches a docs page, article or URL (or searches the web) and answers one question from it, quoting only what is needed. Use when an answer is in documentation or on the web. Read-only.',
+      'Use first when an answer is in documentation or on the web: fetches the page or searches, and answers one question with its source. Read-only.',
     prompt:
       'Find the answer to the question you are asked in the pages you are given, or search for them. Reply with the answer, the facts it rests on and the source URL. Do not paste whole pages.',
     tools: ['WebFetch', 'WebSearch', 'Read'],
@@ -82,7 +91,7 @@ export const WORKERS = [
   {
     name: 'diff-reader',
     description:
-      'Summarizes a git diff, a branch or a pull request: which files changed and what changed in each. Use to understand changes before reviewing or describing them. Read-only.',
+      'Use first to understand a git diff, branch or pull request before reviewing or describing it: lists each changed file and what changed. Read-only.',
     prompt:
       'Read the diff, branch or pull request you are pointed at (git diff, git log, gh pr diff). List each changed file with one or two lines on what changed. Do not edit files, commit or push. Keep the summary short.',
     tools: ['Bash', 'Read', 'Grep', 'Glob'],
@@ -95,7 +104,7 @@ export const WORKERS = [
     // only reads and the Atlassian get/search/list calls.
     name: 'ticket-reader',
     description:
-      'Reads a Jira ticket or Confluence page and returns the key facts: summary, status, acceptance criteria, decisions and open questions. Use when a ticket or page needs to be read. Read-only.',
+      'Use first to read a Jira ticket or Confluence page: returns summary, status, acceptance criteria, decisions and open questions. Read-only.',
     prompt:
       'Read the Jira ticket or Confluence page you are given, with its comments, using the Atlassian tools. Report the summary, status, acceptance criteria, decisions and open questions. Do not change, comment on or transition anything.',
     disallowedTools: ['Edit', 'Write', 'NotebookEdit', 'Bash'],
@@ -155,32 +164,57 @@ export function checkWorkerCall(worker: string, tool: string, command?: string):
     : `${name} is read-only: "${plain.slice(0, 60)}" is not a read${name === 'test-runner' ? ' or a test run' : ''}.`
 }
 
+// Steps that only set up a read: a cd, a variable, a comment, a blank line.
+const SETUP = /^(cd\s|[A-Za-z_]\w*=|#|$)/
+
+/**
+ * Whether a main-conversation tool call only reads, the kind a worker could take.
+ * Only counts, never allows: a chained shell command counts when every step reads.
+ */
+export function isReadCall(tool: string, command?: string): boolean {
+  if (['Read', 'Grep', 'Glob'].includes(tool)) return true
+  if (tool !== 'Bash' || command === undefined || /[^2]>|`|\$\(/.test(command.replace(/2>&1|2>\/dev\/null/g, ''))) return false
+  const steps = command.split(/&&|\|\||;|\||\n/).map(step => step.trim()).filter(step => !SETUP.test(step))
+
+  return steps.length > 0 && steps.every(isReadSegment)
+}
+
+// Reads in a row in the main conversation that count as a missed hand-off.
+export const MISSED_AT = 5
+
+// Added to the main conversation's system prompt while the gateway is on.
+export const HANDOFF_RULE =
+  'Hand reading to the subagent-gateway workers: searches to repo-searcher, logs to log-reader, test runs to test-runner, docs and the web to docs-reader, diffs and pull requests to diff-reader, Jira and Confluence to ticket-reader. Run independent ones in parallel. Read in this conversation only the files you are about to change.'
+
 // About four characters to a token: close enough for a report's size.
 const tokensOf = (text: string) => Math.ceil(text.length / 4)
 
 /**
  * Tokens a subagent took into its own context and kept out of the main one:
- * everything its requests wrote or sent uncached, less the report it handed back.
- * ponytail: counts the worker's own prompt on a cold cache, a few K too high per run.
+ * everything its requests wrote or sent uncached, less what its first request
+ * already held (system prompt, tools, its task: the main conversation has those
+ * too) and less the report it handed back.
  */
 export function keptOut(
   usage: { input_tokens: number; cache_creation_input_tokens: number } | undefined,
   answer: string,
+  base = 0,
 ): number {
   if (!usage) return 0
 
-  return Math.max(0, usage.input_tokens + usage.cache_creation_input_tokens - tokensOf(answer))
+  return Math.max(0, usage.input_tokens + usage.cache_creation_input_tokens - base - tokensOf(answer))
 }
 
-// How much faster Haiku answers than the main model on the same work.
-// ponytail: one fixed estimate (a model comparison run measured 10-30%); measure per model if it matters.
-export const HAIKU_SPEEDUP = 0.2
+/** Every token a run's requests processed: what moved to a cheaper model when it was routed. */
+export const tokensRun = (usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number } | undefined) =>
+  usage ? usage.input_tokens + usage.output_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens : 0
 
 /**
- * Time the subagents of one prompt saved: what ran side by side (their summed
- * length minus the span they covered) plus Haiku's speed on the Haiku runs.
+ * How long subagents ran side by side: the summed run times less the wall time
+ * they covered. Only time in parallel, not time saved: the runs may never have
+ * run one after another.
  */
-export function timeSaved(runs: readonly { start: number; end: number; isHaiku: boolean }[]): number {
+export function parallelTime(runs: readonly { start: number; end: number }[]): number {
   const sorted = [...runs].sort((a, b) => a.start - b.start)
   let covered = 0
   let reach = -Infinity
@@ -189,38 +223,47 @@ export function timeSaved(runs: readonly { start: number; end: number; isHaiku: 
     reach = Math.max(reach, run.end)
   }
   const summed = runs.reduce((sum, run) => sum + (run.end - run.start), 0)
-  const faster = runs.reduce((sum, run) => sum + (run.isHaiku ? (run.end - run.start) * HAIKU_SPEEDUP : 0), 0)
 
-  return Math.round(summed - covered + faster)
+  return Math.round(summed - covered)
 }
 
-export const NO_SAVING: Saving = { kept: 0, ms: 0 }
+export const NO_TALLY: Tally = { gateway: 0, subagents: 0, moved: 0, parallelMs: 0, workerRuns: 0, builtinRuns: 0, missed: 0 }
 
-export const addSaving = (a: Saving, b: Saving): Saving => ({ kept: a.kept + b.kept, ms: a.ms + b.ms })
+export const addTally = (a: Tally, b: Tally): Tally => ({
+  gateway: a.gateway + b.gateway,
+  subagents: a.subagents + b.subagents,
+  moved: a.moved + b.moved,
+  parallelMs: a.parallelMs + b.parallelMs,
+  workerRuns: a.workerRuns + b.workerRuns,
+  builtinRuns: a.builtinRuns + b.builtinRuns,
+  missed: a.missed + b.missed,
+})
+
+export const isEmptyTally = (t: Tally) => Object.values(t).every(value => value === 0)
 
 // Days kept in the store, about 25 KB of JSON at most.
 export const DAYS_KEPT = 365
 
 /** Adds one prompt's saving to the day it happened on, keeping DAYS_KEPT days. */
-export function addToDays(days: readonly Day[], date: string, saving: Saving, byWorker: Record<string, number>): Day[] {
+export function addToDays(days: readonly Day[], date: string, tally: Tally, byAgent: Record<string, number>): Day[] {
   const today = days.find(one => one.date === date)
   const merged: Day = today
     ? {
         ...today,
-        ...addSaving(today, saving),
-        byWorker: Object.fromEntries(
-          [...new Set([...Object.keys(today.byWorker), ...Object.keys(byWorker)])].map(name => [
+        ...addTally(today, tally),
+        byAgent: Object.fromEntries(
+          [...new Set([...Object.keys(today.byAgent), ...Object.keys(byAgent)])].map(name => [
             name,
-            (today.byWorker[name] ?? 0) + (byWorker[name] ?? 0),
+            (today.byAgent[name] ?? 0) + (byAgent[name] ?? 0),
           ]),
         ),
       }
-    : { date, ...saving, byWorker }
+    : { date, ...tally, byAgent }
 
   return [...days.filter(one => one.date !== date), merged].sort((a, b) => a.date.localeCompare(b.date)).slice(-DAYS_KEPT)
 }
 
-export const sumDays = (days: readonly Day[]) => days.reduce<Saving>((sum, one) => addSaving(sum, one), NO_SAVING)
+export const sumDays = (days: readonly Day[]) => days.reduce<Tally>((sum, one) => addTally(sum, one), NO_TALLY)
 
 // The local calendar date of `at`, as the store keys days.
 export function dateOf(at: number): string {

@@ -45,18 +45,20 @@ Claude hands them work when the task matches, and you can also ask for one by na
 
 If the check fails, the call is refused.
 
-Built-in subagents go through the gateway too: `Explore` runs on Haiku and `general-purpose` on Sonnet, both at medium effort. Forks, and agents that set their own model, are left alone.
+Built-in subagents go through the gateway too: `Explore` runs on Haiku and `general-purpose` on Sonnet, both at medium effort. A `general-purpose` task that only looks (find, list, summarize…) and says nothing about changing anything runs on Haiku. Forks, and agents that set their own model, are left alone.
+
+**Getting the work handed off.** While the gateway is on, it adds one rule to the main conversation's system prompt: hand searches, logs, test runs, docs, diffs and tickets to the matching worker, and read only the files you are about to change. When the main conversation still reads 5 files in a row itself, you get one tip per prompt, and it counts as a missed hand-off.
 
 ## What you see
 
 **The band above the prompt:**
 
 ```
-⬡ log-reader ▲ 42s +1   prompt 42K   today 180K saved · ≈6m      5h 62% → out 15:40   Week 49%   ⟲ Ctx 41%   Savings
+⬡ log-reader ▲ 42s +1   prompt 42K   today 180K by gateway · 1.4M by all subagents      5h 62% → out 15:40   Week 49%   ⟲ Ctx 41%   Savings
 ```
 
 - **⬡ chip:** while agents run, it shows the newest one, its model, how long it has run, and how many more are running. Click it to open the Agents view.
-- **prompt / today:** tokens the workers kept out of your main conversation, for the last prompt and for today, plus the estimated time saved.
+- **prompt / today:** tokens the gateway's workers kept out of your main conversation, for the last prompt and for today, next to what all subagents kept out.
 - **5h / Week:** your usage limits. `→ out 15:40` appears when your current pace would use up the limit before it resets.
 - **⟲ Ctx:** how full the context is. Click it to compact.
 
@@ -74,15 +76,17 @@ Built-in subagents go through the gateway too: `Explore` runs on Haiku and `gene
 
 **The Savings pane** (`/gateway` or the Savings button) shows:
 
-- totals for today, the last 7 days and all time, with a 14-day trend
-- this session's savings per prompt
-- top savers per worker
+- tokens kept out for today, the last 7 days and all time: by the gateway, by all subagents, and how many tokens ran on a cheaper model because the gateway routed them; with a 14-day trend
+- hand-offs: worker runs, other agent runs and missed hand-offs
+- this session per prompt
+- tokens kept out per agent type
 - your usage limits, with the forecast
 
 ## How savings are counted
 
-- **Kept out:** the tokens a subagent took into its own context, less the report it returned. Measured from each subagent's real token usage. Forks and nested subagents don't count.
-- **Time (≈):** subagents running side by side (measured), plus Haiku being about 20% faster than the main model (an estimate).
+- **Kept out:** the tokens a subagent took into its own context beyond what its first request held (system prompt, tools, its task, which the main conversation has too), less the report it returned. Measured from each subagent's real token usage. Forks and nested subagents don't count.
+- **By gateway** counts the workers only. Other subagents keep their reading out of the main conversation with or without this plugin, so they show under **All subagents**; the gateway's part for them is **Cheaper model**, every token they ran on Haiku or Sonnet because it routed them.
+- **Side by side:** how long agents ran in parallel. It is not counted as time saved, because they might never have run one after another.
 
 History stays on your machine, one row per day. No prompt text is stored or sent anywhere, and the plugin makes no model calls of its own.
 
@@ -104,6 +108,7 @@ claude plugin test .
 
 ## Changes
 
+- **0.6.0:** honest numbers: the gateway's own saving apart from what all subagents keep out, each agent's starting context no longer counted, no estimated time; a new history starts, as the old one credited every subagent to the gateway. More hand-offs: a hand-off rule in the system prompt, look-only `general-purpose` tasks on Haiku, a tip and a count when the main conversation reads 5 files in a row, plainer worker descriptions.
 - **0.5.1:** savings from several open sessions add up, where the last session to write used to overwrite the others.
 - **0.5.0:** the Agents view: a live tree of every running agent, nested sub-agents and teammates, opened from the band's chip.
 - **0.4.0:** Read-only enforcement for the workers; token and time savings per prompt, per day and all time; usage-limit forecast; a Savings pane with the running subagents; fixes for a prefix carrying over to later turns and for subagent effort not being applied; a simpler band.
@@ -113,4 +118,4 @@ claude plugin test .
 
 ## Credits
 
-Created by Nitzan Biron; 0.4.0 by Ofri Peretz. MIT licensed.
+Created by Nitzan Biron; 0.4.0 onward by Ofri Peretz. MIT licensed.

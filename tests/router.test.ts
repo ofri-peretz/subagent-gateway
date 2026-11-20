@@ -10,7 +10,9 @@ import {
   routeAgent,
   runsOutAt,
   sparkline,
-  timeSaved,
+  isLookOnly,
+  isReadCall,
+  parallelTime,
   tokenText,
 } from '../hooks/rules'
 
@@ -54,23 +56,29 @@ test('ticket-reader reads Atlassian and nothing that writes or sends', async () 
   expect(checkWorkerCall('subagent-gateway:ticket-reader', 'mcp__claude_ai_Gmail__get_thread')).toContain('only reads')
 })
 
-test('kept-out tokens are what the worker took in, less its report', async () => {
+test('kept-out tokens are what the worker took in beyond its starting context, less its report', async () => {
   expect(keptOut({ input_tokens: 2_000, cache_creation_input_tokens: 38_000 }, 'x'.repeat(4_000))).toBe(39_000)
+  expect(keptOut({ input_tokens: 2_000, cache_creation_input_tokens: 38_000 }, 'x'.repeat(4_000), 25_000)).toBe(14_000)
+  expect(keptOut({ input_tokens: 0, cache_creation_input_tokens: 20_000 }, '', 25_000)).toBe(0)
   expect(keptOut({ input_tokens: 10, cache_creation_input_tokens: 0 }, 'x'.repeat(400))).toBe(0)
   expect(keptOut(undefined, 'anything')).toBe(0)
 })
 
-test('time saved counts overlap and Haiku speed, not sequential Sonnet runs', async () => {
-  expect(timeSaved([{ start: 0, end: 10_000, isHaiku: false }, { start: 10_000, end: 20_000, isHaiku: false }])).toBe(0)
-  expect(timeSaved([{ start: 0, end: 10_000, isHaiku: false }, { start: 0, end: 10_000, isHaiku: false }])).toBe(10_000)
-  expect(timeSaved([{ start: 0, end: 10_000, isHaiku: true }])).toBe(2_000)
+test('parallel time is only the overlap of runs', async () => {
+  expect(parallelTime([{ start: 0, end: 10_000 }, { start: 10_000, end: 20_000 }])).toBe(0)
+  expect(parallelTime([{ start: 0, end: 10_000 }, { start: 0, end: 10_000 }])).toBe(10_000)
+  expect(parallelTime([{ start: 0, end: 10_000 }])).toBe(0)
 })
 
-test('a day adds up its prompts and keeps per-worker totals', async () => {
-  const one = addToDays([], '2026-11-19', { kept: 100, ms: 1_000 }, { 'log-reader': 100 })
-  const two = addToDays(one, '2026-11-19', { kept: 50, ms: 0 }, { 'repo-searcher': 50 })
-  expect(two).toEqual([{ date: '2026-11-19', kept: 150, ms: 1_000, byWorker: { 'log-reader': 100, 'repo-searcher': 50 } }])
-  expect(addToDays(two, '2026-11-18', { kept: 1, ms: 0 }, {}).map(day => day.date)).toEqual(['2026-11-18', '2026-11-19'])
+const tally = (gateway: number, subagents: number) => ({ gateway, subagents, moved: 0, parallelMs: 0, workerRuns: 1, builtinRuns: 0, missed: 0 })
+
+test('a day adds up its prompts and keeps per-agent totals', async () => {
+  const one = addToDays([], '2026-11-19', tally(100, 100), { 'log-reader': 100 })
+  const two = addToDays(one, '2026-11-19', { ...tally(0, 50), workerRuns: 0, builtinRuns: 1 }, { Explore: 50 })
+  expect(two).toEqual([
+    { date: '2026-11-19', gateway: 100, subagents: 150, moved: 0, parallelMs: 0, workerRuns: 1, builtinRuns: 1, missed: 0, byAgent: { 'log-reader': 100, Explore: 50 } },
+  ])
+  expect(addToDays(two, '2026-11-18', tally(1, 1), {}).map(day => day.date)).toEqual(['2026-11-18', '2026-11-19'])
 })
 
 test('the limit forecast needs ten minutes of rising usage and a reset after it', async () => {
@@ -92,6 +100,28 @@ test('Explore subagents get Haiku, general-purpose Sonnet, pinned agents are lef
   expect(routeAgent('Explore')?.model).toBe('haiku')
   expect(routeAgent('general-purpose')?.model).toBe('sonnet')
   expect(routeAgent('planner')).toBe(null)
+})
+
+test('a general-purpose task that only looks runs on Haiku, one that changes anything stays on Sonnet', async () => {
+  expect(routeAgent('general-purpose', 'Find where the checkout total is computed')?.model).toBe('haiku')
+  expect(routeAgent('general-purpose', 'Find the bug and fix it')?.model).toBe('sonnet')
+  expect(routeAgent('general-purpose', 'Refactor the billing hooks')?.model).toBe('sonnet')
+  expect(isLookOnly('summarize the open tickets')).toBe(true)
+  expect(isLookOnly('add a test')).toBe(false)
+  expect(isLookOnly('List all files under url-state. Do not edit, create, or delete any file.')).toBe(true)
+  expect(isLookOnly('List the files, then delete the stale ones. Do not push.')).toBe(false)
+})
+
+test('reads in the main conversation are told apart from other calls', async () => {
+  expect(isReadCall('Read')).toBe(true)
+  expect(isReadCall('Grep')).toBe(true)
+  expect(isReadCall('Bash', 'rg useRef src')).toBe(true)
+  expect(isReadCall('Bash', 'pnpm install')).toBe(false)
+  expect(isReadCall('Edit')).toBe(false)
+  expect(isReadCall('Bash', 'cd /repo && grep -rl testIdPrefix src/v2 | sort; echo done')).toBe(true)
+  expect(isReadCall('Bash', 'cd /repo\nS=/tmp/x\ngrep -rn useRef src 2>/dev/null | wc -l')).toBe(true)
+  expect(isReadCall('Bash', 'grep -rl x src > /tmp/out')).toBe(false)
+  expect(isReadCall('Bash', 'cd /repo && git push')).toBe(false)
 })
 
 test('a one-letter prefix picks the model and is stripped', async () => {

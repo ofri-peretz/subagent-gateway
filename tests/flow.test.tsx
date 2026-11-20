@@ -140,7 +140,7 @@ test('an empty agents view says so', async ($, on) => {
 test('Explore is routed to Haiku, and a model named by the call is left alone', async ($, on) => {
   engine(on)
   expect((await $.agent.spawn(spawn('Explore'))).model).toBe('haiku')
-  expect((await $.agent.spawn(spawn('general-purpose'))).model).toBe('sonnet')
+  expect((await $.agent.spawn(spawn('general-purpose', { prompt: 'fix it', description: 'fix it' }))).model).toBe('sonnet')
   expect((await $.agent.spawn(spawn('Explore', { model: 'opus' }))).model).toBe('opus')
 })
 
@@ -155,20 +155,78 @@ test('a worker cannot write, push or send, and other agents are not checked', as
   expect((await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as any)).deny).toBeUndefined()
 })
 
-test('a finished worker adds its kept-out tokens to the prompt, today and the top savers', async ($, on) => {
+test('a worker counts for the gateway, a built-in agent only for all subagents', async ($, on) => {
   const clock = engine(on)
-  const first = await $.agent.spawn(spawn('subagent-gateway:log-reader'))
+  const worker = await $.agent.spawn(spawn('subagent-gateway:log-reader'))
+  const builtin = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix the flaky test' }))
   clock.advance(10_000)
-  await $.turn.complete(done(first.agentId, { input_tokens: 1_000, cache_creation_input_tokens: 39_000 }))
+  await $.turn.complete(done(worker.agentId, { input_tokens: 1_000, cache_creation_input_tokens: 39_000 }))
+  await $.turn.complete(done(builtin.agentId, { input_tokens: 0, cache_creation_input_tokens: 101_000 }))
   await $.turn.complete(done(undefined))
 
   const top = await $.ui.mount(band('terminal'))
-  expect((await top.find({ type: 'Text', text: /^today/ }))?.text).toBe('today 39K saved · ≈2s')
+  expect((await top.find({ type: 'Text', text: /^today/ }))?.text).toBe('today 39K by gateway · 139K by all subagents')
   await top.unmount()
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await pane.find({ type: 'Text', text: /^log-reader$/ })).toBeTruthy()
-  expect((await pane.find({ type: 'Text', text: /^39K · 100%$/ }))?.text).toBe('39K · 100%')
+  expect(await pane.find({ type: 'Text', text: /^log-reader · gateway$/ })).toBeTruthy()
+  expect((await pane.find({ type: 'Text', text: /^39K · 28%$/ }))?.text).toBe('39K · 28%')
   await pane.unmount()
+  const [day] = clock.store.get() as any[]
+  expect(day.moved).toBe(101_010)
+  expect([day.workerRuns, day.builtinRuns, day.parallelMs]).toEqual([1, 1, 10_000])
+})
+
+test('an agent\'s starting context is not counted as kept out', async ($, on) => {
+  const clock = engine(on)
+  on('turn.step', async function* (_: unknown, e: any) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'tool_use', usage: { input_tokens: 5_000, cache_creation_input_tokens: 25_000, cache_read_input_tokens: 0, output_tokens: 0, model: 'claude-haiku-5-5' } } as any
+  })
+  const worker = await $.agent.spawn(spawn('subagent-gateway:repo-searcher'))
+  const stream = $.turn.step({ turnId: 't', index: 0, model: 'haiku', messageCount: 1, agentId: worker.agentId } as any)
+  for await (const _ of stream) {
+  }
+  await $.turn.complete(done(worker.agentId, { input_tokens: 5_000, cache_creation_input_tokens: 66_000 }))
+  await $.turn.complete(done(undefined))
+
+  expect((clock.store.get() as any[])[0].gateway).toBe(40_000)
+})
+
+test('five reads in a row in the main conversation count as a missed hand-off, once, with one tip', async ($, on) => {
+  const clock = engine(on)
+  const toasts: string[] = []
+  on('ui.toast', (_: unknown, e: any) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  for (let i = 0; i < 7; i++) await $.tool.call({ tool: 'Read', file_path: `/f${i}` } as any)
+  await $.tool.call({ tool: 'Edit' } as any)
+  for (let i = 0; i < 5; i++) await $.tool.call({ tool: 'Grep', pattern: 'x' } as any)
+  await $.turn.complete(done(undefined))
+
+  expect((clock.store.get() as any[])[0].missed).toBe(2)
+  expect(toasts).toHaveLength(1)
+  expect(toasts[0]).toContain('repo-searcher')
+})
+
+test('the hand-off rule rides beside each prompt, and stays out when the gateway is off', async ($, on) => {
+  engine(on)
+  const contexts: unknown[] = []
+  on('prompt.submit', (_: unknown, e: any) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+  on('command.register', () => ({ value: { command: 'gateway' } }))
+  await $.prompt.submit({ text: 'where is the spec' } as any)
+  await $.command.run({ command: 'gateway', args: 'off' } as any)
+  await $.prompt.submit({ text: 'where is the spec' } as any)
+  expect((contexts[0] as string[])[0]).toContain('repo-searcher')
+  expect(contexts[1]).toBeUndefined()
+})
+
+test('a look-only general-purpose task runs on Haiku', async ($, on) => {
+  engine(on)
+  expect((await $.agent.spawn(spawn('general-purpose', { prompt: 'Find where the checkout total is computed' }))).model).toBe('haiku')
+  expect((await $.agent.spawn(spawn('general-purpose', { prompt: 'Fix the checkout total' }))).model).toBe('sonnet')
 })
 
 test('a fork does not count as a saving', async ($, on) => {
@@ -178,7 +236,7 @@ test('a fork does not count as a saving', async ($, on) => {
   await $.turn.complete(done(undefined))
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await pane.find({ type: 'Text', text: /^Nothing saved yet/ }))?.text).toContain('Nothing saved yet')
+  expect((await pane.find({ type: 'Text', text: /^Nothing yet/ }))?.text).toContain('Nothing yet')
   await pane.unmount()
 })
 
@@ -242,11 +300,12 @@ test('savings add to what other sessions stored, not only this session', async (
   const clock = engine(on)
   const today = new Date(NOW)
   const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  clock.store.set([{ date, kept: 50_000, ms: 0, byWorker: { Explore: 50_000 } }])
+  const zero = { gateway: 0, subagents: 0, moved: 0, parallelMs: 0, workerRuns: 0, builtinRuns: 0, missed: 0 }
+  clock.store.set([{ date, ...zero, subagents: 50_000, builtinRuns: 1, byAgent: { Explore: 50_000 } }])
   const worker = await $.agent.spawn(spawn('subagent-gateway:log-reader'))
   clock.advance(1_000)
   await $.turn.complete(done(worker.agentId, { input_tokens: 0, cache_creation_input_tokens: 11_000 }))
   await $.turn.complete(done(undefined))
 
-  expect(clock.store.get()).toEqual([{ date, kept: 60_000, ms: 200, byWorker: { Explore: 50_000, 'log-reader': 10_000 } }])
+  expect(clock.store.get()).toEqual([{ date, ...zero, gateway: 10_000, subagents: 60_000, workerRuns: 1, builtinRuns: 1, byAgent: { Explore: 50_000, 'log-reader': 10_000 } }])
 })

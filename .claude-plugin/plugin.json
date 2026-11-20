@@ -1,6 +1,6 @@
 {
   "name": "subagent-gateway",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Hands repo search, logs, test runs, diffs, docs and tickets to read-only Haiku subagents, keeps your main conversation lean, and shows the tokens and time it saved per prompt and over time",
   "types": "./types/index.d.ts",
   "author": {

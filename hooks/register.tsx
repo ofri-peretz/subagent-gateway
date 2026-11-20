@@ -1,46 +1,52 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, ElementTable, EngineInterface, Register, RenderSurface, Timer } from 'claude-code'
 
-import type { Day, Entry, LimitStart, LiveAgent, Saving, SpawnedAgent, Usage } from '../types'
+import type { Day, Entry, LimitStart, LiveAgent, SpawnedAgent, Tally, Usage } from '../types'
 import {
   COMPACT_AT,
-  NO_SAVING,
+  HANDOFF_RULE,
+  MISSED_AT,
+  NO_TALLY,
   SWITCH_WARN_AT,
   WORKERS,
-  addSaving,
+  addTally,
   addToDays,
   checkWorkerCall,
   dateOf,
   durationText,
+  isEmptyTally,
+  isReadCall,
   isWorker,
   keptOut,
   lastDates,
   modelLabel,
+  parallelTime,
   parsePrefix,
   routeAgent,
   runsOutAt,
   sparkline,
   sumDays,
-  timeSaved,
   tokenText,
+  tokensRun,
 } from './rules'
 
 const PANE = 'subagent-gateway'
 const AGENTS_PANE = 'subagent-gateway-agents'
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
-const entries = atom({ plugin: 'subagent-gateway', key: 'entries' } as const, [] as Entry[], { shape: 'entries-1' })
+const entries = atom({ plugin: 'subagent-gateway', key: 'entries' } as const, [] as Entry[], { shape: 'entries-2' })
 // Turns subagent routing and the workers off; the main conversation is never routed.
 const isOff = atom({ plugin: 'subagent-gateway', key: 'isOff' } as const, false)
 const usage = atom({ plugin: 'subagent-gateway', key: 'usage' } as const, null as Usage | null, { shape: 'usage-1' })
-const agents = atom({ plugin: 'subagent-gateway', key: 'agents' } as const, {} as Record<string, SpawnedAgent>, { shape: 'agents-1' })
+const agents = atom({ plugin: 'subagent-gateway', key: 'agents' } as const, {} as Record<string, SpawnedAgent>, { shape: 'agents-2' })
 const isCompacting = atom({ plugin: 'subagent-gateway', key: 'isCompacting' } as const, false)
-const days = atom({ plugin: 'subagent-gateway', key: 'days' } as const, [] as Day[], { shape: 'days-1' })
+const days = atom({ plugin: 'subagent-gateway', key: 'days' } as const, [] as Day[], { shape: 'days-2' })
 // Every agent the engine lists now, as of the last refresh: subagents, nested ones and teammates.
 const live = atom({ plugin: 'subagent-gateway', key: 'live' } as const, [] as LiveAgent[], { shape: 'live-1' })
 const limitStarts = atom({ plugin: 'subagent-gateway', key: 'limitStarts' } as const, {} as Record<string, LimitStart>, { shape: 'limit-starts-1' })
-// The store key that keeps `days` between sessions.
-const DAYS_KEY = 'days-1'
+// The store key that keeps `days` between sessions. days-1 held the 0.5 counting,
+// which credited every subagent to the gateway, so 0.6 starts a new history.
+const DAYS_KEY = 'days-2'
 // How often the agents view refreshes while any agent is still going.
 const REFRESH_MS = 2000
 
@@ -180,10 +186,13 @@ export const register: Register = on => {
   // The model an o/s/h prefix chose for the current prompt; cleared when its turn
   // ends, so a prefix never carries into a command, a notification or the next prompt.
   let turnModel: string | null = null
-  // What the subagents of the current prompt saved so far.
-  let turnKept = 0
-  let turnRuns: { start: number; end: number; isHaiku: boolean }[] = []
-  let turnByWorker: Record<string, number> = {}
+  // What the subagents of the current prompt did so far.
+  let turnTally: Tally = NO_TALLY
+  let turnRuns: { start: number; end: number }[] = []
+  let turnByAgent: Record<string, number> = {}
+  // Reads in a row in the main conversation, and whether this prompt was nudged already.
+  let readStreak = 0
+  let hasNudged = false
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -215,20 +224,37 @@ export const register: Register = on => {
     )
   }
 
-  // Workers are read-only: every call one makes passes checkWorkerCall first.
+  // Workers are read-only: every call one makes passes checkWorkerCall first. In the
+  // main conversation, a run of reads is work a worker could have taken: a missed hand-off.
   on('tool.call', async ($, e, next) => {
-    const info = e.agentId === undefined ? undefined : (await read($, agents))[e.agentId]
-    if (!info || !isWorker(info.type)) return next(e)
     const command = 'command' in e && typeof e.command === 'string' ? e.command : undefined
+
+    if (e.agentId === undefined) {
+      readStreak = isReadCall(e.tool, command) ? readStreak + 1 : 0
+      if (readStreak === MISSED_AT && !(await read($, isOff))) {
+        turnTally = { ...turnTally, missed: turnTally.missed + 1 }
+        if (!hasNudged) {
+          hasNudged = true
+          $.ui.toast(`${MISSED_AT} reads in a row here: repo-searcher could do this and keep the files out of this conversation.`)
+        }
+      }
+
+      return next(e)
+    }
+
+    const info = (await read($, agents))[e.agentId]
+    if (!info || !isWorker(info.type)) return next(e)
     const reason = checkWorkerCall(info.type, e.tool, command)
 
     return reason ? { deny: reason } : next(e)
-  }).catch(($, _e, next) =>
-    next.called ? next(_e) : { deny: `${$.plugin.name}: its read-only guard failed, so the call was refused.` },
+  }).catch(($, e, next) =>
+    // Counting never blocks the main conversation; a worker's call fails closed.
+    next.called || e.agentId === undefined ? next(e) : { deny: `${$.plugin.name}: its read-only guard failed, so the call was refused.` },
   )
 
   on('agent.spawn', async ($, e, next) => {
-    const route = e.model || e.fork || e.workflow || e.resume || e.isTeammate || (await read($, isOff)) ? null : routeAgent(e.subagentType)
+    const route =
+      e.model || e.fork || e.workflow || e.resume || e.isTeammate || (await read($, isOff)) ? null : routeAgent(e.subagentType, `${e.description} ${e.prompt}`)
     const result = await next(route ? { ...e, model: route.model } : e)
     if (!result.agentId) return result
 
@@ -244,6 +270,8 @@ export const register: Register = on => {
         effort: route?.effort ?? worker?.effort ?? null,
         // A fork carries the whole conversation and a nested agent saves its own parent's context: neither counts.
         isCounted: !e.fork && e.parentAgentId === undefined,
+        isRouted: route !== null,
+        base: null,
       },
     }))
     await refresh($)
@@ -253,10 +281,17 @@ export const register: Register = on => {
 
   on('turn.step', async function* ($, e, next) {
     if (e.agentId !== undefined) {
+      const id = e.agentId
+      const info = (await read($, agents))[id]
       // A routed subagent runs at the effort its route chose; the spawn cannot carry it.
-      const effort = (await read($, agents))[e.agentId]?.effort
+      const result = yield* next(info?.effort ? { ...e, effort: info.effort } : e)
+      // What the first request held is the agent's starting context, not something it kept out.
+      if (e.index === 0 && info && result.usage) {
+        const base = result.usage.input_tokens + result.usage.cache_creation_input_tokens
+        await update($, agents, all => (all[id] ? { ...all, [id]: { ...all[id], base } } : all))
+      }
 
-      return yield* next(effort ? { ...e, effort } : e)
+      return result
     }
 
     const step = turnModel ? { ...e, model: turnModel } : e
@@ -276,11 +311,19 @@ export const register: Register = on => {
       const info = (await read($, agents))[id]
       if (!info) return next(e)
       if (info.isCounted) {
-        const kept = keptOut(e.usage, e.answer)
+        const kept = keptOut(e.usage, e.answer, info.base ?? 0)
         const name = agentName(info.type)
-        turnKept += kept
-        turnRuns = [...turnRuns, { start: info.at, end: now, isHaiku: modelLabel(info.model) === 'Haiku' }]
-        turnByWorker = { ...turnByWorker, [name]: (turnByWorker[name] ?? 0) + kept }
+        const worker = isWorker(info.type)
+        turnTally = addTally(turnTally, {
+          ...NO_TALLY,
+          gateway: worker ? kept : 0,
+          subagents: kept,
+          moved: !worker && info.isRouted ? tokensRun(e.usage) : 0,
+          workerRuns: worker ? 1 : 0,
+          builtinRuns: worker ? 0 : 1,
+        })
+        turnRuns = [...turnRuns, { start: info.at, end: now }]
+        turnByAgent = { ...turnByAgent, [name]: (turnByAgent[name] ?? 0) + kept }
       }
       const result = await next(e)
       await refresh($)
@@ -288,23 +331,23 @@ export const register: Register = on => {
       return result
     }
 
-    const saving: Saving = { kept: turnKept, ms: timeSaved(turnRuns) }
-    const byWorker = turnByWorker
+    const tally: Tally = { ...turnTally, parallelMs: parallelTime(turnRuns) }
+    const byAgent = turnByAgent
     turnModel = null
-    turnKept = 0
+    turnTally = NO_TALLY
     turnRuns = []
-    turnByWorker = {}
+    turnByAgent = {}
 
-    if (saving.kept > 0 || saving.ms > 0) {
+    if (!isEmptyTally(tally)) {
       await update($, entries, list => {
         const last = list.length - 1
 
-        return last < 0 ? list : list.map((one, i) => (i === last ? { ...one, saved: addSaving(one.saved ?? NO_SAVING, saving) } : one))
+        return last < 0 ? list : list.map((one, i) => (i === last ? { ...one, saved: addTally(one.saved ?? NO_TALLY, tally) } : one))
       })
       // Other sessions write the same store: merge into what it holds now, not this session's copy.
       const stored = await $.store.get(DAYS_KEY).catch(() => undefined)
       const base = Array.isArray(stored) ? (stored as Day[]) : await read($, days)
-      const updated = addToDays(base, dateOf(now), saving, byWorker)
+      const updated = addToDays(base, dateOf(now), tally, byAgent)
       await update($, days, () => updated)
       await $.store.set(DAYS_KEY, updated).catch(() => null)
     }
@@ -365,6 +408,8 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     turnModel = null
+    readStreak = 0
+    hasNudged = false
     if (e.command || e.isMeta) return next(e)
 
     // Only a prefix moves the main conversation off the session model.
@@ -376,7 +421,11 @@ export const register: Register = on => {
       $.ui.toast(`${modelLabel(picked.model)} re-reads all ${tokenText(tokens)} tokens of this conversation. /compact first, or start a new session.`)
     }
 
-    return next(picked ? { ...e, text: picked.text } : e)
+    // The hand-off rule rides beside each prompt (about 70 tokens): a plugin that
+    // composes first can stop a system-prompt section or a context block from arriving.
+    const context = (await read($, isOff)) ? e.context : [...(e.context ?? []), HANDOFF_RULE]
+
+    return next({ ...e, ...(picked ? { text: picked.text } : {}), ...(context ? { context } : {}) })
   }).catch((_$, e, next) => next(e))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -442,17 +491,17 @@ export const register: Register = on => {
               </Text>
             </Button>
           )}
-          {lastSaved && lastSaved.kept > 0 && (
+          {lastSaved && lastSaved.gateway > 0 && (
             <Text wrap="truncate-end">
               <Text dimColor>prompt </Text>
-              <Text bold color="success">{tokenText(lastSaved.kept)}</Text>
+              <Text bold color="success">{tokenText(lastSaved.gateway)}</Text>
             </Text>
           )}
-          {today && today.kept > 0 && columns >= 80 && (
+          {today && today.subagents > 0 && columns >= 80 && (
             <Text wrap="truncate-end">
               <Text dimColor>today </Text>
-              <Text bold color="success">{tokenText(today.kept)}</Text>
-              <Text dimColor>{` saved · ≈${durationText(today.ms)}`}</Text>
+              <Text bold color="success">{tokenText(today.gateway)}</Text>
+              <Text dimColor>{` by gateway · ${tokenText(today.subagents)} by all subagents`}</Text>
             </Text>
           )}
         </Box>
@@ -483,22 +532,23 @@ export const register: Register = on => {
 
     const recent = lastDates(now, 7)
     const byDate = new Map(allDays.map(one => [one.date, one]))
-    const periods: [string, Saving][] = [
-      ['Today', byDate.get(dateOf(now)) ?? NO_SAVING],
+    const periods: [string, Tally][] = [
+      ['Today', byDate.get(dateOf(now)) ?? NO_TALLY],
       ['Last 7 days', sumDays(allDays.filter(one => recent.includes(one.date)))],
       ['All time', sumDays(allDays)],
     ]
     const workers = new Map<string, number>()
     for (const day of allDays) {
-      for (const [name, kept] of Object.entries(day.byWorker)) workers.set(name, (workers.get(name) ?? 0) + kept)
+      for (const [name, kept] of Object.entries(day.byAgent)) workers.set(name, (workers.get(name) ?? 0) + kept)
     }
+    const workerNames = new Set<string>(WORKERS.map(one => one.name))
     const allKept = [...workers.values()].reduce((sum, kept) => sum + kept, 0)
     const prompts = list.filter(one => one.saved).slice(-8).reverse()
 
     const row = (texts: string[], key: string, isHeader = false) => (
       <Box key={key} flexDirection="row">
         {texts.map((text, i) => (
-          <Box key={`${key}-${i}`} width={i === 0 ? '40%' : '30%'}>
+          <Box key={`${key}-${i}`} width={i === 0 ? '28%' : `${Math.floor(72 / (texts.length - 1))}%`}>
             <Text tabular bold={isHeader || i === 0} dimColor={isHeader} wrap="truncate-end">{text}</Text>
           </Box>
         ))}
@@ -522,30 +572,41 @@ export const register: Register = on => {
           'Tokens kept out of your main conversation',
           'totals',
           allDays.length === 0 ? (
-            <Text dimColor>Nothing saved yet. Savings show once a subagent finishes.</Text>
+            <Text dimColor>Nothing yet. Numbers show once a subagent finishes.</Text>
           ) : (
             <Box flexDirection="column">
-              {row(['', 'Kept out', '≈ Time'], 'head', true)}
-              {periods.map(([label, saving]) => row([label, tokenText(saving.kept), durationText(saving.ms)], label))}
-              <Text tabular color="success">{sparkline(lastDates(now, 14).map(date => byDate.get(date)?.kept ?? 0))}</Text>
-              <Text dimColor size="caption">Last 14 days</Text>
+              {row(['', 'By gateway', 'All subagents', 'Cheaper model'], 'head', true)}
+              {periods.map(([label, one]) => row([label, tokenText(one.gateway), tokenText(one.subagents), tokenText(one.moved)], label))}
+              <Text tabular color="success">{sparkline(lastDates(now, 14).map(date => byDate.get(date)?.gateway ?? 0))}</Text>
+              <Text dimColor size="caption">By gateway, last 14 days</Text>
             </Box>
           ),
         )}
+
+        {allDays.length > 0 &&
+          section(
+            'Hand-offs',
+            'handoffs',
+            <Box flexDirection="column">
+              {row(['', 'Workers', 'Other agents', 'Missed'], 'hhead', true)}
+              {periods.map(([label, one]) => row([label, String(one.workerRuns), String(one.builtinRuns), String(one.missed)], `h${label}`))}
+              <Text dimColor size="caption">{`Missed: ${MISSED_AT}+ reads in a row in the main conversation. ≈${durationText(sumDays(allDays).parallelMs)} of agents running side by side in all.`}</Text>
+            </Box>,
+          )}
 
         {prompts.length > 0 &&
           section(
             'This session, per prompt',
             'prompts',
             <Box flexDirection="column">
-              {row(['Prompt at', 'Kept out', '≈ Time'], 'phead', true)}
-              {prompts.map(one => row([clock(one.at), tokenText(one.saved?.kept ?? 0), durationText(one.saved?.ms ?? 0)], `p${one.at}`))}
+              {row(['Prompt at', 'By gateway', 'All subagents'], 'phead', true)}
+              {prompts.map(one => row([clock(one.at), tokenText(one.saved?.gateway ?? 0), tokenText(one.saved?.subagents ?? 0)], `p${one.at}`))}
             </Box>,
           )}
 
         {workers.size > 0 &&
           section(
-            'Top savers',
+            'Kept out per agent type',
             'workers',
             [...workers]
               .sort((a, b) => b[1] - a[1])
@@ -553,7 +614,7 @@ export const register: Register = on => {
               .map(([name, kept]) => (
                 <Box key={name} flexDirection="column">
                   <Box flexDirection="row" justifyContent="space-between">
-                    <Text>{name}</Text>
+                    <Text>{workerNames.has(name) ? `${name} · gateway` : name}</Text>
                     <Text tabular>{`${tokenText(kept)} · ${Math.round((kept / Math.max(1, allKept)) * 100)}%`}</Text>
                   </Box>
                   {bar({ Box, Text }, e.surface, (kept / Math.max(1, allKept)) * 100, 'success', cells)}
@@ -589,7 +650,7 @@ export const register: Register = on => {
           )}
 
         <Text dimColor size="caption">
-          Kept out: tokens subagents read, less the reports they returned. Time ≈ subagents running side by side, plus Haiku being about 20% faster. Kept on this machine only.
+          Kept out: what a subagent read beyond its starting context, less the report it returned. By gateway counts the workers only; other subagents keep their reading out with or without the gateway, which only moves them to a cheaper model. Kept on this machine only.
         </Text>
       </Box>
     )

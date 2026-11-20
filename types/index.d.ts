@@ -1,7 +1,19 @@
-// What subagents saved: tokens kept out of the main conversation, and time (estimated).
-export type Saving = {
-  kept: number
-  ms: number
+// What subagents did for one prompt or one day.
+export type Tally = {
+  // Tokens the gateway's workers kept out of the main conversation: the gateway's own saving.
+  gateway: number
+  // Tokens every top-level subagent kept out, workers included; most would be kept out without the gateway.
+  subagents: number
+  // Tokens built-in agents ran on a cheaper model because the gateway routed them.
+  moved: number
+  // Time subagents ran side by side, in ms.
+  parallelMs: number
+  // Runs of a gateway worker.
+  workerRuns: number
+  // Runs of any other subagent type (Explore, general-purpose, custom agents).
+  builtinRuns: number
+  // Times the main conversation read MISSED_AT or more files in a row instead of handing them off.
+  missed: number
 }
 
 // One main-conversation prompt: its model, whether an o/s/h prefix chose it,
@@ -10,13 +22,13 @@ export type Entry = {
   at: number
   model: string
   routed: boolean
-  saved: Saving | null
+  saved: Tally | null
 }
 
-// One calendar day of savings, kept across sessions; byWorker is kept tokens per subagent type.
-export type Day = Saving & {
+// One calendar day, kept across sessions; byAgent is kept-out tokens per subagent type.
+export type Day = Tally & {
   date: string
-  byWorker: Record<string, number>
+  byAgent: Record<string, number>
 }
 
 // The account's limit windows and the session's context, as last measured.
@@ -35,13 +47,16 @@ export type LimitStart = {
 
 // A subagent this session started: its type and model, when it started, the
 // effort its route set (null keeps its own), and whether its savings count
-// (not a fork, not nested in another subagent).
+// (not a fork, not nested in another subagent), whether the gateway chose its
+// model, and the tokens its first request held, once known.
 export type SpawnedAgent = {
   type: string
   model: string
   at: number
   effort: 'low' | 'medium' | 'high' | null
   isCounted: boolean
+  isRouted: boolean
+  base: number | null
 }
 
 // One agent the engine lists: its parent (null under the main conversation),

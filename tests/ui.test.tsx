@@ -8,13 +8,13 @@ const local = (at: number) => {
 }
 
 const ENTRIES = [
-  { at: NOW - 300_000, model: 'claude-opus-5-5', routed: false, saved: { kept: 42_000, ms: 30_000 } },
+  { at: NOW - 300_000, model: 'claude-opus-5-5', routed: false, saved: { gateway: 42000, subagents: 90000, moved: 0, parallelMs: 0, workerRuns: 0, builtinRuns: 0, missed: 0 } },
   { at: NOW - 60_000, model: 'claude-opus-5-5', routed: false, saved: null },
 ]
 
 const DAYS = [
-  { date: local(NOW - 86_400_000), kept: 100_000, ms: 60_000, byWorker: { 'repo-searcher': 100_000 } },
-  { date: local(NOW), kept: 180_000, ms: 360_000, byWorker: { 'log-reader': 180_000 } },
+  { date: local(NOW - 86_400_000), gateway: 100_000, subagents: 100_000, moved: 0, parallelMs: 0, workerRuns: 2, builtinRuns: 0, missed: 1, byAgent: { 'repo-searcher': 100_000 } },
+  { date: local(NOW), gateway: 180_000, subagents: 1_400_000, moved: 2_000_000, parallelMs: 60_000, workerRuns: 3, builtinRuns: 4, missed: 2, byAgent: { 'log-reader': 180_000, 'general-purpose': 1_220_000 } },
 ]
 
 const USAGE = {
@@ -27,9 +27,9 @@ const USAGE = {
 }
 
 const VALUES: Record<string, unknown> = {
-  entries: { shape: 'entries-1', value: ENTRIES },
+  entries: { shape: 'entries-2', value: ENTRIES },
   usage: { shape: 'usage-1', value: USAGE },
-  days: { shape: 'days-1', value: DAYS },
+  days: { shape: 'days-2', value: DAYS },
   limitStarts: { shape: 'limit-starts-1', value: { five_hour: { percent: 22, at: NOW - 2 * 3_600_000, resetsAt: '2099-01-01T00:00:00Z' } } },
   isOff: false,
 }
@@ -51,14 +51,18 @@ const pane = (surface: string) =>
     props: { title: 'Savings', isFocused: false, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
   }) as any
 
-test('the pane shows totals, per-prompt savings, top savers and limits on every surface', async ($, on) => {
+test('the pane shows gateway and all-subagent totals, hand-offs, per-agent totals and limits on every surface', async ($, on) => {
   seed(on)
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount(pane(surface))
     expect(await ui.find({ type: 'Text', text: /^All time$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^280K$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^42K$/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /^log-reader$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^1.5M$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^2.0M$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^log-reader · gateway$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^general-purpose$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^Hand-offs$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /Weekly limit/ })).toBeTruthy()
     expect((await ui.find({ type: 'Text', text: /runs out at/ }))?.text).toMatch(/^At this pace it runs out at \d\d:\d\d$/)
     expect(await ui.find({ type: 'Text', text: /\$/ })).toBeFalsy()
@@ -70,19 +74,20 @@ test('the pane shows totals, per-prompt savings, top savers and limits on every 
 test('an empty pane says what it is waiting for and draws no empty sections', async ($, on) => {
   seed(on, { isOff: false })
   const ui = await $.ui.mount(pane('desktop'))
-  expect((await ui.find({ type: 'Text', text: /^Nothing saved yet/ }))?.text).toBe('Nothing saved yet. Savings show once a subagent finishes.')
-  expect(await ui.find({ type: 'Text', text: /^Top savers$/ })).toBeFalsy()
+  expect((await ui.find({ type: 'Text', text: /^Nothing yet/ }))?.text).toBe('Nothing yet. Numbers show once a subagent finishes.')
+  expect(await ui.find({ type: 'Text', text: /^Kept out per agent type$/ })).toBeFalsy()
+  expect(await ui.find({ type: 'Text', text: /^Hand-offs$/ })).toBeFalsy()
   expect(await ui.find({ type: 'Text', text: /per prompt/ })).toBeFalsy()
   expect(await ui.find({ type: 'Text', text: /^Usage limits$/ })).toBeFalsy()
   await ui.unmount()
 })
 
-test('the band shows the last prompt and today saved, and the 5h forecast', async ($, on) => {
+test('the band shows the gateway\'s own saving apart from all subagents, and the 5h forecast', async ($, on) => {
   seed(on)
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount(band(surface, 140))
     expect((await ui.find({ type: 'Text', text: /^prompt/ }))?.text).toBe('prompt 42K')
-    expect((await ui.find({ type: 'Text', text: /^today/ }))?.text).toBe('today 180K saved · ≈6m')
+    expect((await ui.find({ type: 'Text', text: /^today/ }))?.text).toBe('today 180K by gateway · 1.4M by all subagents')
     expect((await ui.find({ type: 'Text', text: /^5h/ }))?.text).toMatch(/^5h 62% → out \d\d:\d\d$/)
     expect((await ui.find({ type: 'Text', text: /Ctx/ }))?.text).toBe('⟲ Ctx 31%')
     expect(await ui.find({ type: 'Text', text: /Opus/ })).toBeFalsy()
@@ -91,7 +96,7 @@ test('the band shows the last prompt and today saved, and the 5h forecast', asyn
 })
 
 test('the band names the model only when a prefix chose it', async ($, on) => {
-  seed(on, { ...VALUES, entries: { shape: 'entries-1', value: [{ at: NOW, model: 'claude-haiku-5-5', routed: true, saved: null }] } })
+  seed(on, { ...VALUES, entries: { shape: 'entries-2', value: [{ at: NOW, model: 'claude-haiku-5-5', routed: true, saved: null }] } })
   const ui = await $.ui.mount(band('terminal', 140))
   expect((await ui.find({ type: 'Text', text: /prefix/ }))?.text).toBe(' ▲ Haiku · prefix ')
   await ui.unmount()
