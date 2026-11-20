@@ -2,6 +2,15 @@ import { expect, test } from 'claude-code/testing'
 
 const NOW = Date.parse('2098-12-31T21:46:00Z')
 
+const AGENTS = (surface: string) =>
+  ({
+    plugin: 'subagent-gateway',
+    component: 'Pane',
+    requestId: 'subagent-gateway-agents',
+    surface,
+    props: { title: 'Agents', isFocused: false, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+  }) as any
+
 const PANE = {
   plugin: 'subagent-gateway',
   component: 'Pane',
@@ -39,14 +48,28 @@ const done = (agentId: string | undefined, usage?: Record<string, unknown>) =>
 const engine = (on: any) => {
   let next = 0
   let now = NOW
+  const listed: any[] = []
   on('clock.now', () => ({ value: now }))
-  on('agent.spawn', (_: unknown, e: any) => ({ model: e.model ?? (e.subagentType.startsWith('subagent-gateway:') ? 'claude-haiku-5-5' : e.parentModel), agentId: `a${++next}` }))
-  on('turn.complete', () => ({ text: '' }))
+  on('agent.list', () => ({ value: listed.map(one => ({ ...one })) }))
+  on('agent.spawn', (_: unknown, e: any) => {
+    const agentId = `a${++next}`
+    listed.push({ id: agentId, type: e.subagentType, description: e.description, status: 'running', ...(e.parentAgentId ? { parentId: e.parentAgentId } : {}) })
+    return { model: e.model ?? (e.subagentType.startsWith('subagent-gateway:') ? 'claude-haiku-5-5' : e.parentModel), agentId }
+  })
+  on('turn.complete', (_: unknown, e: any) => {
+    const one = listed.find(agent => agent.id === e.agentId)
+    if (one) one.status = 'completed'
+    return { text: '' }
+  })
   on('tool.call', () => ({ result: {} }))
   on('store.set', () => ({ value: undefined }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const opened: string[] = []
+  on('ui.open', (_: unknown, e: any) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
 
-  return { advance: (ms: number) => (now += ms) }
+  return { advance: (ms: number) => (now += ms), opened }
 }
 
 test('a running worker shows in the band and the pane, and leaves both when it finishes', async ($, on) => {
@@ -59,9 +82,10 @@ test('a running worker shows in the band and the pane, and leaves both when it f
     const top = await $.ui.mount(band(surface))
     expect((await top.find({ type: 'Text', text: /⬡/ }))?.text).toBe(' ⬡ Explore ▲ 42s +1 ')
     await top.unmount()
-    const pane = await $.ui.mount({ ...PANE, surface })
-    expect((await pane.find({ type: 'Text', text: /^Running now/ }))?.text).toBe('Running now · 2')
+    const pane = await $.ui.mount(AGENTS(surface))
+    expect((await pane.find({ type: 'Text', text: /running ·/ }))?.text).toBe('2 running · 0 idle or done')
     expect(await pane.find({ type: 'Text', text: /^log-reader$/ })).toBeTruthy()
+    expect(await pane.find({ type: 'Text', text: /^Explore$/ })).toBeTruthy()
     await pane.unmount()
   }
 
@@ -70,8 +94,41 @@ test('a running worker shows in the band and the pane, and leaves both when it f
   const top = await $.ui.mount(band('desktop'))
   expect(await top.find({ type: 'Text', text: /⬡/ })).toBeFalsy()
   await top.unmount()
-  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await pane.find({ type: 'Text', text: /^Running now/ })).toBeFalsy()
+  const pane = await $.ui.mount(AGENTS('desktop'))
+  expect((await pane.find({ type: 'Text', text: /running ·/ }))?.text).toBe('0 running · 2 idle or done')
+  expect((await pane.find({ type: 'Text', text: /✓/ }))?.text).toBe('▲ log-reader · ✓ · 42s')
+  await pane.unmount()
+})
+
+test('the agents view nests sub-agents under the agent that started them', async ($, on) => {
+  engine(on)
+  const parent = await $.agent.spawn(spawn('general-purpose', { description: 'fix the flaky test' }))
+  await $.agent.spawn(spawn('Explore', { description: 'find the spec', parentAgentId: parent.agentId }))
+  await $.agent.spawn(spawn('subagent-gateway:log-reader', { description: 'read the CI log' }))
+
+  for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
+    const pane = await $.ui.mount(AGENTS(surface))
+    expect((await pane.find({ type: 'Text', text: /running ·/ }))?.text).toBe('3 running · 0 idle or done')
+    expect(await pane.find({ type: 'Text', text: /^└ $/ })).toBeTruthy()
+    expect(await pane.find({ type: 'Text', text: /^  find the spec$/ })).toBeTruthy()
+    expect(await pane.find({ type: 'Text', text: /^fix the flaky test$/ })).toBeTruthy()
+    await pane.unmount()
+  }
+})
+
+test('the running chip opens the agents view', async ($, on) => {
+  const { opened } = engine(on)
+  await $.agent.spawn(spawn('Explore'))
+  const top = await $.ui.mount(band('desktop'))
+  await top.press({ key: 'agents' })
+  expect(opened).toEqual(['subagent-gateway-agents'])
+  await top.unmount()
+})
+
+test('an empty agents view says so', async ($, on) => {
+  engine(on)
+  const pane = await $.ui.mount(AGENTS('desktop'))
+  expect((await pane.find({ type: 'Text', text: /agents/ }))?.text).toBe('No agents in this session yet.')
   await pane.unmount()
 })
 

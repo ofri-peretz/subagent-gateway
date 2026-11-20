@@ -55,14 +55,25 @@ Built-in subagents go through the gateway too: `Explore` runs on Haiku and `gene
 ⬡ log-reader ▲ 42s +1   prompt 42K   today 180K saved · ≈6m      5h 62% → out 15:40   Week 49%   ⟲ Ctx 41%   Savings
 ```
 
-- **⬡ chip:** while subagents run, it shows the newest one, its model, how long it has run, and how many more are running.
+- **⬡ chip:** while agents run, it shows the newest one, its model, how long it has run, and how many more are running. Click it to open the Agents view.
 - **prompt / today:** tokens the workers kept out of your main conversation, for the last prompt and for today, plus the estimated time saved.
 - **5h / Week:** your usage limits. `→ out 15:40` appears when your current pace would use up the limit before it resets.
 - **⟲ Ctx:** how full the context is. Click it to compact.
 
+**The Agents view** (click the ⬡ chip, or `/gateway agents`) shows every agent in the session as a live tree: subagents, the sub-agents they started (nested under their parent) and teammates. For each one you see its model, type, status (running, waiting, idle, ✓ done, ✗ failed) and how long it has run, with its task underneath. It refreshes every 2 seconds while anything is still going.
+
+```
+2 running · 1 idle or done
+● general-purpose · running · 1m
+  fix the flaky test
+└ ▲ Explore · running · 20s
+    find the spec
+▲ log-reader · ✓ · 42s
+  read the CI log
+```
+
 **The Savings pane** (`/gateway` or the Savings button) shows:
 
-- the subagents running now, with model and elapsed time
 - totals for today, the last 7 days and all time, with a 14-day trend
 - this session's savings per prompt
 - top savers per worker
@@ -77,7 +88,7 @@ History stays on your machine, one row per day. No prompt text is stored or sent
 
 ## Commands and prefixes
 
-- `/gateway` opens the Savings pane. `/gateway off` and `/gateway on` turn the workers and subagent routing off or on.
+- `/gateway` opens the Savings pane, and `/gateway agents` the Agents view. `/gateway off` and `/gateway on` turn the workers and subagent routing off or on.
 - Start a prompt with `o `, `s ` or `h ` to run that one prompt on Opus, Sonnet or Haiku. The next prompt goes back to your model. Past 50K tokens of context you get a warning, because the switch re-reads everything.
 
 ## Where it works
@@ -93,6 +104,7 @@ claude plugin test .
 
 ## Changes
 
+- **0.5.0:** the Agents view: a live tree of every running agent, nested sub-agents and teammates, opened from the band's chip.
 - **0.4.0:** Read-only enforcement for the workers; token and time savings per prompt, per day and all time; usage-limit forecast; a Savings pane with the running subagents; fixes for a prefix carrying over to later turns and for subagent effort not being applied; a simpler band.
 - **0.3.0:** Haiku workers, compact button, running-subagent chip.
 - **0.2.0:** per-prompt model switching removed (it cost more than it saved); subagents routed instead.

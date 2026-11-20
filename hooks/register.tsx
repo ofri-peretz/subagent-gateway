@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { Color, ElementTable, EngineInterface, Register, RenderSurface } from 'claude-code'
+import type { Color, ElementTable, EngineInterface, Register, RenderSurface, Timer } from 'claude-code'
 
-import type { Day, Entry, LimitStart, Saving, SpawnedAgent, Usage } from '../types'
+import type { Day, Entry, LimitStart, LiveAgent, Saving, SpawnedAgent, Usage } from '../types'
 import {
   COMPACT_AT,
   NO_SAVING,
@@ -26,6 +26,7 @@ import {
 } from './rules'
 
 const PANE = 'subagent-gateway'
+const AGENTS_PANE = 'subagent-gateway-agents'
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
 const entries = atom({ plugin: 'subagent-gateway', key: 'entries' } as const, [] as Entry[], { shape: 'entries-1' })
@@ -35,11 +36,13 @@ const usage = atom({ plugin: 'subagent-gateway', key: 'usage' } as const, null a
 const agents = atom({ plugin: 'subagent-gateway', key: 'agents' } as const, {} as Record<string, SpawnedAgent>, { shape: 'agents-1' })
 const isCompacting = atom({ plugin: 'subagent-gateway', key: 'isCompacting' } as const, false)
 const days = atom({ plugin: 'subagent-gateway', key: 'days' } as const, [] as Day[], { shape: 'days-1' })
+// Every agent the engine lists now, as of the last refresh: subagents, nested ones and teammates.
+const live = atom({ plugin: 'subagent-gateway', key: 'live' } as const, [] as LiveAgent[], { shape: 'live-1' })
 const limitStarts = atom({ plugin: 'subagent-gateway', key: 'limitStarts' } as const, {} as Record<string, LimitStart>, { shape: 'limit-starts-1' })
 // The store key that keeps `days` between sessions.
 const DAYS_KEY = 'days-1'
-// A subagent not seen to finish in this long is no longer shown as running.
-const RUNNING_STALE_MS = 30 * 60 * 1000
+// How often the agents view refreshes while any agent is still going.
+const REFRESH_MS = 2000
 
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5-hour limit', seven_day: 'Weekly limit', spend_limit: 'Spend limit' }
 const SHORT: Record<string, string> = { five_hour: '5h', seven_day: 'Week', spend_limit: 'Spend' }
@@ -68,12 +71,28 @@ const iconOf = (model: string) => ICONS[modelLabel(model)] ?? '○'
 // An agent type without the mod's own prefix: "subagent-gateway:log-reader" reads "log-reader".
 const agentName = (type: string) => type.replace(/^subagent-gateway:/, '')
 
-// Subagents started and not yet finished, oldest first.
-function runningOf(all: Record<string, SpawnedAgent>, now: number) {
-  return Object.entries(all)
-    .filter(([, one]) => one.endedAt === null && now - one.at < RUNNING_STALE_MS)
-    .map(([id, one]) => ({ id, ...one }))
-    .sort((a, b) => a.at - b.at)
+// Statuses of an agent still at work, and of one that ended.
+const BUSY = new Set(['pending', 'running', 'waiting'])
+const ENDED = new Set(['completed', 'failed', 'killed'])
+const busyOf = (agents: readonly LiveAgent[]) => agents.filter(one => BUSY.has(one.status))
+
+const STATUS_COLORS: Record<string, Color> = { running: 'success', pending: 'warning', waiting: 'warning', idle: 'subtle', completed: 'subtle', failed: 'error', killed: 'error' }
+const STATUS_MARKS: Record<string, string> = { completed: '✓', failed: '✗', killed: '✗' }
+
+/** The agents as a tree, depth first: each one after its parent, children oldest first. */
+function treeOf(agents: readonly LiveAgent[]): { agent: LiveAgent; depth: number }[] {
+  const ids = new Set(agents.map(one => one.id))
+  const children = new Map<string | null, LiveAgent[]>()
+  for (const one of agents) {
+    const parent = one.parentId !== null && ids.has(one.parentId) ? one.parentId : null
+    children.set(parent, [...(children.get(parent) ?? []), one])
+  }
+  const walk = (parent: string | null, depth: number): { agent: LiveAgent; depth: number }[] =>
+    [...(children.get(parent) ?? [])]
+      .sort((a, b) => a.since - b.since)
+      .flatMap(agent => [{ agent, depth }, ...walk(agent.id, depth + 1)])
+
+  return walk(null, 0)
 }
 
 // The band's compact button: the same compaction /compact runs, between turns only.
@@ -123,6 +142,40 @@ function bar({ Box, Text }: Pick<ElementTable, 'Box' | 'Text'>, surface: RenderS
   )
 }
 
+let ticker: Timer | null = null
+
+// Takes the engine's agent list into `live`, keeping when each was first seen,
+// and refreshes every REFRESH_MS while any agent is still going.
+async function refresh($: EngineInterface) {
+  const listed = await $.agent.list().catch(() => null)
+  if (!listed) return
+  const now = await $.clock.now()
+  const known = await read($, agents)
+  const before = new Map((await read($, live)).map(one => [one.id, one]))
+  const next: LiveAgent[] = listed.map(one => ({
+    id: one.id,
+    parentId: one.parentId ?? null,
+    type: one.type,
+    label: one.name ?? one.teammateId ?? one.description,
+    status: one.status,
+    model: known[one.id]?.model ?? before.get(one.id)?.model ?? null,
+    since: known[one.id]?.at ?? before.get(one.id)?.since ?? now,
+  }))
+  await update($, live, () => next)
+
+  const isGoing = next.some(one => !ENDED.has(one.status))
+  if (isGoing && !ticker) {
+    try {
+      ticker = $.clock.every(REFRESH_MS, () => void refresh($))
+    } catch {
+      ticker = null
+    }
+  } else if (!isGoing && ticker) {
+    ticker.cancel()
+    ticker = null
+  }
+}
+
 export const register: Register = on => {
   // The model an o/s/h prefix chose for the current prompt; cleared when its turn
   // ends, so a prefix never carries into a command, a notification or the next prompt.
@@ -135,13 +188,14 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'gateway',
-      description: 'Gateway: `/gateway` opens the savings pane, `/gateway off` or `/gateway on` toggles the workers and subagent routing',
+      description: 'Gateway: `/gateway` opens savings, `/gateway agents` the running agents, `/gateway off` or `on` toggles the workers and routing',
     })
     for (const worker of WORKERS) {
       await $.agent.register(worker).catch(() => null)
     }
     const stored = await $.store.get(DAYS_KEY).catch(() => undefined)
     if (Array.isArray(stored)) await update($, days, () => stored as Day[])
+    await refresh($)
     const now = await $.session.usage().catch(() => null)
     if (now) {
       await update($, usage, () => ({
@@ -187,12 +241,12 @@ export const register: Register = on => {
         type: e.subagentType,
         model: result.model ?? route?.model ?? e.parentModel,
         at: now,
-        endedAt: null,
         effort: route?.effort ?? worker?.effort ?? null,
         // A fork carries the whole conversation and a nested agent saves its own parent's context: neither counts.
         isCounted: !e.fork && e.parentAgentId === undefined,
       },
     }))
+    await refresh($)
 
     return result
   }).catch((_$, e, next) => next(e))
@@ -221,7 +275,6 @@ export const register: Register = on => {
       const id = e.agentId
       const info = (await read($, agents))[id]
       if (!info) return next(e)
-      await update($, agents, all => ({ ...all, [id]: { ...info, endedAt: now } }))
       if (info.isCounted) {
         const kept = keptOut(e.usage, e.answer)
         const name = agentName(info.type)
@@ -229,8 +282,10 @@ export const register: Register = on => {
         turnRuns = [...turnRuns, { start: info.at, end: now, isHaiku: modelLabel(info.model) === 'Haiku' }]
         turnByWorker = { ...turnByWorker, [name]: (turnByWorker[name] ?? 0) + kept }
       }
+      const result = await next(e)
+      await refresh($)
 
-      return next(e)
+      return result
     }
 
     const saving: Saving = { kept: turnKept, ms: timeSaved(turnRuns) }
@@ -293,6 +348,13 @@ export const register: Register = on => {
       return { text: `Workers and subagent routing ${arg}.` }
     }
 
+    if (arg === 'agents') {
+      await refresh($)
+      await $.ui.open({ id: AGENTS_PANE, title: 'Agents' })
+
+      return { text: 'Agents pane opened.' }
+    }
+
     await $.ui.open({ id: PANE, title: 'Savings' })
 
     return { text: 'Savings pane opened.' }
@@ -319,8 +381,8 @@ export const register: Register = on => {
     const allDays = await read($, days)
     const measured = await read($, usage)
     const now = await $.clock.now()
-    const live = runningOf(await read($, agents), now)
-    if (e.props.hasSurvey || (list.length === 0 && allDays.length === 0 && !measured && live.length === 0)) return next(e)
+    const busy = busyOf(await read($, live))
+    if (e.props.hasSurvey || (list.length === 0 && allDays.length === 0 && !measured && busy.length === 0)) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const columns = e.viewport?.columns ?? 100
@@ -329,7 +391,7 @@ export const register: Register = on => {
     const lastTurn = list[list.length - 1]
     const lastSaved = [...list].reverse().find(one => one.saved)?.saved ?? null
     const today = allDays.find(one => one.date === dateOf(now)) ?? null
-    const newest = live[live.length - 1]
+    const newest = [...busy].sort((a, b) => a.since - b.since)[busy.length - 1]
     const compacting = await read($, isCompacting)
     const contextTokens = measured?.contextTokens ?? null
     const contextColor: Color =
@@ -371,9 +433,11 @@ export const register: Register = on => {
             </Text>
           )}
           {newest && (
-            <Text backgroundColor={colorOf(newest.model)} color="inverseText" bold wrap="truncate-end">
-              {` ⬡ ${agentName(newest.type)} ${iconOf(newest.model)} ${durationText(now - newest.at)}${live.length > 1 ? ` +${live.length - 1}` : ''} `}
-            </Text>
+            <Button key="agents" onPress={() => void $.ui.open({ id: AGENTS_PANE, title: 'Agents' })}>
+              <Text backgroundColor={newest.model ? colorOf(newest.model) : 'subtle'} color="inverseText" bold wrap="truncate-end">
+                {` ⬡ ${agentName(newest.type)}${newest.model ? ` ${iconOf(newest.model)}` : ''} ${durationText(now - newest.since)}${busy.length > 1 ? ` +${busy.length - 1}` : ''} `}
+              </Text>
+            </Button>
           )}
           {lastSaved && lastSaved.kept > 0 && (
             <Text wrap="truncate-end">
@@ -412,7 +476,6 @@ export const register: Register = on => {
     const allDays = await read($, days)
     const measured = await read($, usage)
     const starts = await read($, limitStarts)
-    const live = runningOf(await read($, agents), now)
     const cells = Math.max(8, Math.min(30, (e.props.bodyColumns ?? 40) - 20))
 
     const recent = lastDates(now, 7)
@@ -451,19 +514,6 @@ export const register: Register = on => {
           <Text bold size="heading" color="claude">Savings</Text>
           <Button key="toggle" label={off ? 'Turn workers on' : 'Turn workers off'} onPress={() => update($, isOff, value => !value)} />
         </Box>
-
-        {live.length > 0 &&
-          section(
-            `Running now · ${live.length}`,
-            'running',
-            live.map(one => (
-              <Text key={one.id} wrap="truncate-end">
-                <Text color={colorOf(one.model)} bold>{`${iconOf(one.model)} ${modelLabel(one.model)} `}</Text>
-                <Text>{agentName(one.type)}</Text>
-                <Text dimColor>{` · ${durationText(now - one.at)}`}</Text>
-              </Text>
-            )),
-          )}
 
         {section(
           'Tokens kept out of your main conversation',
@@ -538,6 +588,39 @@ export const register: Register = on => {
         <Text dimColor size="caption">
           Kept out: tokens subagents read, less the reports they returned. Time ≈ subagents running side by side, plus Haiku being about 20% faster. Kept on this machine only.
         </Text>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: AGENTS_PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const now = await $.clock.now()
+    const all = await read($, live)
+    const busy = busyOf(all)
+    const rows = treeOf(all)
+
+    return (
+      <Box flexDirection="column" gap="sm">
+        <Text bold size="heading" color="claude">Agents</Text>
+        <Text dimColor>
+          {all.length === 0 ? 'No agents in this session yet.' : `${busy.length} running · ${all.length - busy.length} idle or done`}
+        </Text>
+        {rows.length > 0 && (
+          <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX="sm">
+            {rows.map(({ agent, depth }) => (
+              <Box key={agent.id} flexDirection="column">
+                <Text wrap="truncate-end" dimColor={ENDED.has(agent.status)}>
+                  <Text dimColor>{depth > 0 ? `${'  '.repeat(depth - 1)}└ ` : ''}</Text>
+                  {agent.model && <Text color={colorOf(agent.model)} bold>{`${iconOf(agent.model)} `}</Text>}
+                  <Text bold>{agentName(agent.type)}</Text>
+                  <Text color={STATUS_COLORS[agent.status] ?? 'subtle'}>{` · ${STATUS_MARKS[agent.status] ?? agent.status}`}</Text>
+                  <Text dimColor>{` · ${durationText(now - agent.since)}`}</Text>
+                </Text>
+                <Text dimColor size="caption" wrap="truncate-end">{`${'  '.repeat(depth)}${agent.label}`}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
       </Box>
     )
   })

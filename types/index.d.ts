@@ -33,16 +33,27 @@ export type LimitStart = {
   resetsAt: string | null
 }
 
-// A subagent this session started: its type and model, when it started and
-// ended (null while running), the effort its route set (null keeps its own),
-// and whether its savings count (not a fork, not nested in another subagent).
+// A subagent this session started: its type and model, when it started, the
+// effort its route set (null keeps its own), and whether its savings count
+// (not a fork, not nested in another subagent).
 export type SpawnedAgent = {
   type: string
   model: string
   at: number
-  endedAt: number | null
   effort: 'low' | 'medium' | 'high' | null
   isCounted: boolean
+}
+
+// One agent the engine lists: its parent (null under the main conversation),
+// type, name or task, status, model when known, and since when it has been seen.
+export type LiveAgent = {
+  id: string
+  parentId: string | null
+  type: string
+  label: string
+  status: string
+  model: string | null
+  since: number
 }
 
 declare module 'claude-code' {
@@ -54,6 +65,7 @@ declare module 'claude-code' {
       agents: Shaped<Record<string, SpawnedAgent>>
       isCompacting: boolean
       days: Shaped<Day[]>
+      live: Shaped<LiveAgent[]>
       limitStarts: Shaped<Record<string, LimitStart>>
     }
   }
