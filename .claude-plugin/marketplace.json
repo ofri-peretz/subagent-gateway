@@ -1,6 +1,27 @@
 {
   "name": "subagent-gateway",
-  "description": "A gateway for Claude Code subagents: read-only Haiku workers that keep your main context lean, with the tokens and time they saved per prompt and over time",
-  "owner": { "name": "Ofri Peretz" },
-  "plugins": [{ "name": "subagent-gateway", "source": "./" }]
+  "description": "Interlace: check what coding agents ship. subagent-gateway sends the heavy reading to read-only Haiku workers and shows what every agent is doing.",
+  "owner": {
+    "name": "Ofri Peretz · Interlace",
+    "url": "https://interlace.tools"
+  },
+  "plugins": [
+    {
+      "name": "subagent-gateway",
+      "source": "./",
+      "description": "Hands repo searches, logs, test runs, diffs, docs and tickets to read-only Haiku workers so your main conversation stays small, shows every running agent live and flags two agents editing the same file, and counts the tokens it kept out, honestly",
+      "category": "productivity",
+      "keywords": [
+        "subagents",
+        "haiku",
+        "tokens",
+        "context",
+        "usage-limits",
+        "agents-view",
+        "read-only",
+        "interlace"
+      ],
+      "homepage": "https://github.com/ofri-peretz/subagent-gateway#readme"
+    }
+  ]
 }

@@ -73,6 +73,20 @@ export type LiveAgent = {
   since: number
 }
 
+// What one agent (or the main conversation, under MAIN) has done so far this session.
+export type Activity = {
+  /** New tokens its requests took in and wrote so far (no cache reads). Default 0. */
+  tokens: number
+  /** How large its context was at its latest request. Default 0. */
+  context: number
+  /** Its latest tool call, as a short label ("Edit register.tsx"). Default null. */
+  tool: string | null
+  /** Each file it edited or wrote, with when it last did. Default empty. */
+  files: Record<string, number>
+  /** Files another live agent edited too while both ran: a collision. Default empty. */
+  clashes: string[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'subagent-gateway': {
@@ -84,6 +98,7 @@ declare module 'claude-code' {
       days: Shaped<Day[]>
       live: Shaped<LiveAgent[]>
       limitStarts: Shaped<Record<string, LimitStart>>
+      activity: Shaped<Record<string, Activity>>
     }
   }
 }

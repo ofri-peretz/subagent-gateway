@@ -1,8 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, ElementTable, EngineInterface, Register, RenderSurface, Timer } from 'claude-code'
 
-import type { Day, Entry, LimitStart, LiveAgent, SpawnedAgent, Tally, Usage } from '../types'
+import type { Activity, Day, Entry, LimitStart, LiveAgent, SpawnedAgent, Tally, Usage } from '../types'
 import {
+  baseName,
+  clashesWith,
+  MAIN,
+  toolLabel,
+  WRITE_TOOLS,
   COMPACT_AT,
   HANDOFF_RULE,
   MISSED_AT,
@@ -43,6 +48,7 @@ const isCompacting = atom({ plugin: 'subagent-gateway', key: 'isCompacting' } as
 const days = atom({ plugin: 'subagent-gateway', key: 'days' } as const, [] as Day[], { shape: 'days-2' })
 // Every agent the engine lists now, as of the last refresh: subagents, nested ones and teammates.
 const live = atom({ plugin: 'subagent-gateway', key: 'live' } as const, [] as LiveAgent[], { shape: 'live-1' })
+const activity = atom({ plugin: 'subagent-gateway', key: 'activity' } as const, {} as Record<string, Activity>, { shape: 'activity-1' })
 const limitStarts = atom({ plugin: 'subagent-gateway', key: 'limitStarts' } as const, {} as Record<string, LimitStart>, { shape: 'limit-starts-1' })
 // The store key that keeps `days` between sessions. days-1 held the 0.5 counting,
 // which credited every subagent to the gateway, so 0.6 starts a new history.
@@ -182,6 +188,38 @@ async function refresh($: EngineInterface) {
   }
 }
 
+const NO_ACTIVITY: Activity = { tokens: 0, context: 0, tool: null, files: {}, clashes: [] }
+// Collisions already announced, so each file and pair gets one toast.
+const announced = new Set<string>()
+
+// Records an agent's (or the main conversation's) tool call; an edit to a file
+// another live party edited while both ran marks a collision on both and toasts once.
+async function track($: EngineInterface, id: string, tool: string, path: string | undefined, command: string | undefined) {
+  const now = await $.clock.now()
+  const known = await read($, agents)
+  const status = new Map((await read($, live)).map(one => [one.id, one.status]))
+  const isAlive = (one: string) => one === MAIN || !ENDED.has(status.get(one) ?? 'running')
+  const nameOf = (one: string) => (one === MAIN ? 'the main conversation' : agentName(known[one]?.type ?? one))
+  const isWrite = WRITE_TOOLS.has(tool) && path !== undefined
+  let clashes: string[] = []
+  await update($, activity, all => {
+    const own = all[id] ?? NO_ACTIVITY
+    if (isWrite) clashes = clashesWith(all, id, path, id === MAIN ? 0 : (known[id]?.at ?? 0), isAlive)
+    const next: Record<string, Activity> = { ...all, [id]: { ...own, tool: toolLabel(tool, path, command), files: isWrite ? { ...own.files, [path]: now } : own.files } }
+    for (const one of clashes.length > 0 ? [id, ...clashes] : []) {
+      const act = next[one] ?? NO_ACTIVITY
+      next[one] = { ...act, clashes: [...new Set([...act.clashes, path!])] }
+    }
+    return next
+  })
+  for (const other of clashes) {
+    const key = [path, ...[id, other].sort()].join('|')
+    if (announced.has(key)) continue
+    announced.add(key)
+    $.ui.toast(`⚠ ${baseName(path!)}: ${nameOf(id)} and ${nameOf(other)} both edited it while running. Check one did not undo the other.`)
+  }
+}
+
 export const register: Register = on => {
   // The model an o/s/h prefix chose for the current prompt; cleared when its turn
   // ends, so a prefix never carries into a command, a notification or the next prompt.
@@ -228,6 +266,7 @@ export const register: Register = on => {
   // main conversation, a run of reads is work a worker could have taken: a missed hand-off.
   on('tool.call', async ($, e, next) => {
     const command = 'command' in e && typeof e.command === 'string' ? e.command : undefined
+    const path = 'file_path' in e && typeof e.file_path === 'string' ? e.file_path : 'notebook_path' in e && typeof e.notebook_path === 'string' ? e.notebook_path : undefined
 
     if (e.agentId === undefined) {
       readStreak = isReadCall(e.tool, command) ? readStreak + 1 : 0
@@ -239,14 +278,17 @@ export const register: Register = on => {
         }
       }
 
+      await track($, MAIN, e.tool, path, command).catch(() => null)
+
       return next(e)
     }
 
     const info = (await read($, agents))[e.agentId]
-    if (!info || !isWorker(info.type)) return next(e)
-    const reason = checkWorkerCall(info.type, e.tool, command)
+    const reason = info && isWorker(info.type) ? checkWorkerCall(info.type, e.tool, command) : null
+    if (reason) return { deny: reason }
+    await track($, e.agentId, e.tool, path, command).catch(() => null)
 
-    return reason ? { deny: reason } : next(e)
+    return next(e)
   }).catch(($, e, next) =>
     // Counting never blocks the main conversation; a worker's call fails closed.
     next.called || e.agentId === undefined ? next(e) : { deny: `${$.plugin.name}: its read-only guard failed, so the call was refused.` },
@@ -288,9 +330,26 @@ export const register: Register = on => {
       const result = yield* next(info?.effort ? { ...e, effort: info.effort } : e)
       // What the first request held is the agent's starting context, not something it kept out.
       // A continued agent starts a new turn: time it from here, not from its spawn.
+      if (result.usage) {
+        const used = result.usage
+        await update($, activity, all => {
+          const own = all[id] ?? NO_ACTIVITY
+          return {
+            ...all,
+            [id]: {
+              ...own,
+              tokens: own.tokens + used.input_tokens + used.output_tokens + used.cache_creation_input_tokens,
+              context: used.input_tokens + used.cache_read_input_tokens + used.cache_creation_input_tokens,
+            },
+          }
+        })
+      }
       if (e.index === 0 && info && result.usage) {
         const base = result.usage.input_tokens + result.usage.cache_creation_input_tokens
-        await update($, agents, all => (all[id] ? { ...all, [id]: { ...all[id], base, ...(all[id].hasRun ? { at: start } : {}) } } : all))
+        await update($, agents, all => {
+          const own = all[id]
+          return own ? { ...all, [id]: { ...own, base, ...(own.hasRun ? { at: start } : {}) } } : all
+        })
       }
 
       return result
@@ -447,6 +506,8 @@ export const register: Register = on => {
     const lastSaved = [...list].reverse().find(one => one.saved)?.saved ?? null
     const today = allDays.find(one => one.date === dateOf(now)) ?? null
     const newest = [...busy].sort((a, b) => a.since - b.since)[busy.length - 1]
+    const acts = await read($, activity)
+    const clashCount = busy.filter(one => (acts[one.id]?.clashes.length ?? 0) > 0).length
     const compacting = await read($, isCompacting)
     const contextTokens = measured?.contextTokens ?? null
     const contextColor: Color =
@@ -490,7 +551,7 @@ export const register: Register = on => {
           {newest && (
             <Button key="agents" onPress={() => void $.ui.open({ id: AGENTS_PANE, title: 'Agents' })}>
               <Text backgroundColor={newest.model ? colorOf(newest.model) : 'subtle'} color="inverseText" bold wrap="truncate-end">
-                {` ⬡ ${agentName(newest.type)}${newest.model ? ` ${iconOf(newest.model)}` : ''} ${durationText(now - newest.since)}${busy.length > 1 ? ` +${busy.length - 1}` : ''} `}
+                {` ⬡ ${agentName(newest.type)}${newest.model ? ` ${iconOf(newest.model)}` : ''} ${durationText(now - newest.since)}${busy.length > 1 ? ` +${busy.length - 1}` : ''}${clashCount > 0 ? ` ⚠${clashCount}` : ''} `}
               </Text>
             </Button>
           )}
@@ -665,6 +726,7 @@ export const register: Register = on => {
     const all = await read($, live)
     const busy = busyOf(all)
     const rows = treeOf(all)
+    const acts = await read($, activity)
 
     return (
       <Box flexDirection="column" gap="sm">
@@ -674,18 +736,30 @@ export const register: Register = on => {
         </Text>
         {rows.length > 0 && (
           <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX="sm">
-            {rows.map(({ agent, depth }) => (
-              <Box key={agent.id} flexDirection="column">
-                <Text wrap="truncate-end" dimColor={ENDED.has(agent.status)}>
-                  <Text dimColor>{depth > 0 ? `${'  '.repeat(depth - 1)}└ ` : ''}</Text>
-                  {agent.model && <Text color={colorOf(agent.model)} bold>{`${iconOf(agent.model)} `}</Text>}
-                  <Text bold>{agentName(agent.type)}</Text>
-                  <Text color={STATUS_COLORS[agent.status] ?? 'subtle'}>{` · ${STATUS_MARKS[agent.status] ?? agent.status}`}</Text>
-                  <Text dimColor>{` · ${durationText(now - agent.since)}`}</Text>
-                </Text>
-                <Text dimColor size="caption" wrap="truncate-end">{`${'  '.repeat(depth)}${agent.label}`}</Text>
-              </Box>
-            ))}
+            {rows.map(({ agent, depth }) => {
+              const act = acts[agent.id]
+              const pad = '  '.repeat(depth)
+              const files = act ? Object.keys(act.files).map(baseName) : []
+
+              return (
+                <Box key={agent.id} flexDirection="column">
+                  <Text wrap="truncate-end" dimColor={ENDED.has(agent.status)}>
+                    <Text dimColor>{depth > 0 ? `${'  '.repeat(depth - 1)}└ ` : ''}</Text>
+                    {agent.model && <Text color={colorOf(agent.model)} bold>{`${iconOf(agent.model)} `}</Text>}
+                    <Text bold>{agentName(agent.type)}</Text>
+                    <Text color={STATUS_COLORS[agent.status] ?? 'subtle'}>{` · ${STATUS_MARKS[agent.status] ?? agent.status}`}</Text>
+                    <Text dimColor>{` · ${durationText(now - agent.since)}`}</Text>
+                    {act && act.tokens > 0 && <Text dimColor>{` · ${tokenText(act.tokens)} new · ctx ${tokenText(act.context)}`}</Text>}
+                  </Text>
+                  <Text dimColor size="caption" wrap="truncate-end">{`${pad}${agent.label}`}</Text>
+                  {act?.tool && BUSY.has(agent.status) && <Text size="caption" wrap="truncate-end">{`${pad}→ ${act.tool}`}</Text>}
+                  {files.length > 0 && <Text dimColor size="caption" wrap="truncate-end">{`${pad}edited ${files.join(', ')}`}</Text>}
+                  {act?.clashes.map(file => (
+                    <Text key={file} color="warning" size="caption" wrap="truncate-end">{`${pad}⚠ ${baseName(file)}: another agent edited it too`}</Text>
+                  ))}
+                </Box>
+              )
+            })}
           </Box>
         )}
       </Box>

@@ -1,6 +1,8 @@
+<img src=".claude-plugin/icon.png" alt="Interlace" width="72" align="right">
+
 # subagent-gateway
 
-A Claude Code plugin that sends the heavy reading through cheap, read-only Haiku subagents and shows what that saved, in tokens and time, per prompt and over time.
+A Claude Code plugin that sends the heavy reading through cheap, read-only Haiku subagents, shows every running agent live, and counts the tokens it kept out of your main conversation, per prompt and over time. Part of [Interlace](https://interlace.tools): check what coding agents ship.
 
 Your main conversation stays on the model you chose. Repo searches, logs, test runs, diffs, docs and tickets go to six Haiku workers. They read the bulky material in their own context and hand back a short report, so your main conversation stays small. That matters because every reply re-reads the whole conversation.
 
@@ -66,13 +68,21 @@ Built-in subagents go through the gateway too: `Explore` runs on Haiku and `gene
 
 ```
 2 running · 1 idle or done
-● general-purpose · running · 1m
+● general-purpose · running · 1m · 48K new · ctx 61K
   fix the flaky test
-└ ▲ Explore · running · 20s
+  → Edit Login.tsx
+  edited Login.tsx, auth.ts
+  ⚠ Login.tsx: another agent edited it too
+└ ▲ Explore · running · 20s · 9K new · ctx 22K
     find the spec
-▲ log-reader · ✓ · 42s
+    → Grep useLogin
+▲ log-reader · ✓ · 42s · 31K new · ctx 35K
   read the CI log
 ```
+
+Each row also shows the agent's new tokens so far (cache reads left out), how large its context is now, the tool it is running, and the files it edited.
+
+**Collisions.** When two agents that are both running edit the same file, or an agent edits a file the main conversation edited after that agent started, both rows get a ⚠, the band's chip shows ⚠ and how many agents collide, and one toast names the file and both agents. Agents in separate worktrees edit separate paths, so they never collide.
 
 **The Savings pane** (`/gateway` or the Savings button) shows:
 
@@ -108,6 +118,7 @@ claude plugin test .
 
 ## Changes
 
+- **0.7.0:** Interlace icon and full marketplace metadata. The Agents view shows each agent's tokens, context, current tool and edited files, and flags two running agents that edit the same file.
 - **0.6.1:** fixes: Cheaper model no longer counts cache reads (it read about 30× too high), and an agent continued over several turns counts as one run, timed per turn.
 - **0.6.0:** honest numbers: the gateway's own saving apart from what all subagents keep out, each agent's starting context no longer counted, no estimated time; a new history starts, as the old one credited every subagent to the gateway. More hand-offs: a hand-off rule in the system prompt, look-only `general-purpose` tasks on Haiku, a tip and a count when the main conversation reads 5 files in a row, plainer worker descriptions.
 - **0.5.1:** savings from several open sessions add up, where the last session to write used to overwrite the others.
@@ -119,4 +130,4 @@ claude plugin test .
 
 ## Credits
 
-Created by Nitzan Biron; 0.4.0 onward by Ofri Peretz. MIT licensed.
+By Ofri Peretz, as part of [Interlace](https://interlace.tools). MIT licensed; see LICENSE.

@@ -1,6 +1,6 @@
 // The routing, safety and savings rules: pure, so the tests can call them directly.
 
-import type { Day, Tally } from '../types'
+import type { Activity, Day, Tally } from '../types'
 
 export type Effort = 'low' | 'medium' | 'high'
 // effort absent: keep the session's effort.
@@ -335,4 +335,38 @@ export function modelLabel(model: string): string {
   const name = found?.[1]?.toLowerCase() ?? model
 
   return name.charAt(0).toUpperCase() + name.slice(1)
+}
+
+/** The key the main conversation's activity is kept under. */
+export const MAIN = 'main'
+
+/** Tools that change a file: the ones that can collide. */
+export const WRITE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+
+/** A file path's last part. */
+export const baseName = (path: string) => path.split('/').pop() ?? path
+
+/** A short label for a tool call: the tool and its file or command. */
+export function toolLabel(tool: string, path?: string, command?: string): string {
+  const name = tool.startsWith('mcp__') ? (tool.split('__').pop() ?? tool) : tool
+  const detail = path ? baseName(path) : command ? (command.split('\n')[0] ?? '').slice(0, 40) : ''
+
+  return detail ? `${name} ${detail}` : name
+}
+
+/**
+ * Who else edited `path` while both they and `self` ran: another party whose edit
+ * came after `self` started, and who is still alive now. Separate worktrees have
+ * separate paths, so they never collide.
+ */
+export function clashesWith(
+  all: Record<string, Activity>,
+  self: string,
+  path: string,
+  selfSince: number,
+  isAlive: (id: string) => boolean,
+): string[] {
+  return Object.entries(all)
+    .filter(([id, one]) => id !== self && (one.files[path] ?? -1) >= selfSince && isAlive(id))
+    .map(([id]) => id)
 }

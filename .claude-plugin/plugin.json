@@ -1,10 +1,24 @@
 {
   "name": "subagent-gateway",
-  "version": "0.6.1",
-  "description": "Hands repo search, logs, test runs, diffs, docs and tickets to read-only Haiku subagents, keeps your main conversation lean, and shows the tokens and time it saved per prompt and over time",
+  "version": "0.7.0",
+  "description": "Hands repo searches, logs, test runs, diffs, docs and tickets to read-only Haiku workers so your main conversation stays small, shows every running agent live and flags two agents editing the same file, and counts the tokens it kept out, honestly",
   "types": "./types/index.d.ts",
   "author": {
-    "name": "Nitzan Biron and Ofri Peretz"
+    "name": "Ofri Peretz · Interlace",
+    "url": "https://interlace.tools"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://github.com/ofri-peretz/subagent-gateway#readme",
+  "repository": "https://github.com/ofri-peretz/subagent-gateway",
+  "keywords": [
+    "subagents",
+    "haiku",
+    "tokens",
+    "context",
+    "usage-limits",
+    "agents-view",
+    "read-only",
+    "interlace"
+  ],
+  "icon": "./.claude-plugin/icon.png"
 }

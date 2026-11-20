@@ -319,3 +319,56 @@ test('savings add to what other sessions stored, not only this session', async (
 
   expect(clock.store.get()).toEqual([{ date, ...zero, gateway: 10_000, subagents: 60_000, workerRuns: 1, builtinRuns: 1, byAgent: { Explore: 50_000, 'log-reader': 10_000 } }])
 })
+
+test('two running agents editing one file are flagged once, on both rows', async ($, on) => {
+  engine(on)
+  const toasts: string[] = []
+  on('ui.toast', (_: unknown, e: any) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  const one = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix the login bug', description: 'fix login' }))
+  const two = await $.agent.spawn(spawn('general-purpose', { prompt: 'refactor the login form', description: 'refactor login' }))
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/Login.tsx', agentId: one.agentId } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/Login.tsx', agentId: two.agentId } as any)
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/Login.tsx', agentId: one.agentId } as any)
+
+  expect(toasts).toEqual(['⚠ Login.tsx: general-purpose and general-purpose both edited it while running. Check one did not undo the other.'])
+  const pane = await $.ui.mount(AGENTS('desktop'))
+  expect(await pane.findAll({ type: 'Text', text: /⚠ Login\.tsx/ })).toHaveLength(2)
+  expect(await pane.find({ type: 'Text', text: /edited Login\.tsx/ })).toBeTruthy()
+  expect((await pane.find({ type: 'Text', text: /→/ }))?.text).toContain('Write Login.tsx')
+  await pane.unmount()
+})
+
+test('separate worktrees, a finished agent, or an edit before the agent started do not collide', async ($, on) => {
+  const clock = engine(on)
+  const toasts: string[] = []
+  on('ui.toast', (_: unknown, e: any) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/App.tsx' } as any)
+  clock.advance(1_000)
+  const one = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix it', description: 'fix it' }))
+  const two = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix it', description: 'fix it' }))
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/App.tsx', agentId: one.agentId } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/.claude/worktrees/b/src/App.tsx', agentId: two.agentId } as any)
+  await $.turn.complete(done(one.agentId, { input_tokens: 0, cache_creation_input_tokens: 0 }))
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/App.tsx', agentId: two.agentId } as any)
+
+  expect(toasts).toEqual([])
+})
+
+test('the agents view shows each agent\'s new tokens and context so far', async ($, on) => {
+  engine(on)
+  on('turn.step', async function* () {
+    return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'tool_use', usage: { input_tokens: 2_000, cache_creation_input_tokens: 10_000, cache_read_input_tokens: 30_000, output_tokens: 500, model: 'claude-sonnet-5-5' } } as any
+  })
+  const one = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix it', description: 'fix it' }))
+  for await (const _ of $.turn.step({ turnId: 't', index: 0, model: 'sonnet', messageCount: 1, agentId: one.agentId } as any)) {
+  }
+  const pane = await $.ui.mount(AGENTS('desktop'))
+  expect((await pane.find({ type: 'Text', text: /new · ctx/ }))?.text).toContain('13K new · ctx 42K')
+  await pane.unmount()
+})
