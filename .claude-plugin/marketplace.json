@@ -1,0 +1,6 @@
+{
+  "name": "subagent-gateway",
+  "description": "A gateway for Claude Code subagents: read-only Haiku workers that keep your main context lean, with the tokens and time they saved per prompt and over time",
+  "owner": { "name": "Ofri Peretz" },
+  "plugins": [{ "name": "subagent-gateway", "source": "./" }]
+}
