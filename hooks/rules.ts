@@ -205,9 +205,12 @@ export function keptOut(
   return Math.max(0, usage.input_tokens + usage.cache_creation_input_tokens - base - tokensOf(answer))
 }
 
-/** Every token a run's requests processed: what moved to a cheaper model when it was routed. */
-export const tokensRun = (usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number } | undefined) =>
-  usage ? usage.input_tokens + usage.output_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens : 0
+/**
+ * The new tokens a run's requests took in and wrote: what moved to a cheaper model when it was routed.
+ * Cache reads are left out: each request re-reads the agent's own context, which would count it hundreds of times.
+ */
+export const tokensRun = (usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens: number } | undefined) =>
+  usage ? usage.input_tokens + usage.output_tokens + usage.cache_creation_input_tokens : 0
 
 /**
  * How long subagents ran side by side: the summed run times less the wall time

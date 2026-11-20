@@ -284,11 +284,13 @@ export const register: Register = on => {
       const id = e.agentId
       const info = (await read($, agents))[id]
       // A routed subagent runs at the effort its route chose; the spawn cannot carry it.
+      const start = await $.clock.now()
       const result = yield* next(info?.effort ? { ...e, effort: info.effort } : e)
       // What the first request held is the agent's starting context, not something it kept out.
+      // A continued agent starts a new turn: time it from here, not from its spawn.
       if (e.index === 0 && info && result.usage) {
         const base = result.usage.input_tokens + result.usage.cache_creation_input_tokens
-        await update($, agents, all => (all[id] ? { ...all, [id]: { ...all[id], base } } : all))
+        await update($, agents, all => (all[id] ? { ...all, [id]: { ...all[id], base, ...(all[id].hasRun ? { at: start } : {}) } } : all))
       }
 
       return result
@@ -319,9 +321,10 @@ export const register: Register = on => {
           gateway: worker ? kept : 0,
           subagents: kept,
           moved: !worker && info.isRouted ? tokensRun(e.usage) : 0,
-          workerRuns: worker ? 1 : 0,
-          builtinRuns: worker ? 0 : 1,
+          workerRuns: worker && !info.hasRun ? 1 : 0,
+          builtinRuns: worker || info.hasRun ? 0 : 1,
         })
+        await update($, agents, all => (all[id] ? { ...all, [id]: { ...all[id], hasRun: true } } : all))
         turnRuns = [...turnRuns, { start: info.at, end: now }]
         turnByAgent = { ...turnByAgent, [name]: (turnByAgent[name] ?? 0) + kept }
       }

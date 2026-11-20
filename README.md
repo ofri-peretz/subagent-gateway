@@ -85,7 +85,7 @@ Built-in subagents go through the gateway too: `Explore` runs on Haiku and `gene
 ## How savings are counted
 
 - **Kept out:** the tokens a subagent took into its own context beyond what its first request held (system prompt, tools, its task, which the main conversation has too), less the report it returned. Measured from each subagent's real token usage. Forks and nested subagents don't count.
-- **By gateway** counts the workers only. Other subagents keep their reading out of the main conversation with or without this plugin, so they show under **All subagents**; the gateway's part for them is **Cheaper model**, every token they ran on Haiku or Sonnet because it routed them.
+- **By gateway** counts the workers only. Other subagents keep their reading out of the main conversation with or without this plugin, so they show under **All subagents**; the gateway's part for them is **Cheaper model**, the new tokens they took in and wrote on Haiku or Sonnet because it routed them (cache reads are left out: every request re-reads the agent's own context).
 - **Side by side:** how long agents ran in parallel. It is not counted as time saved, because they might never have run one after another.
 
 History stays on your machine, one row per day. No prompt text is stored or sent anywhere, and the plugin makes no model calls of its own.
@@ -108,6 +108,7 @@ claude plugin test .
 
 ## Changes
 
+- **0.6.1:** fixes: Cheaper model no longer counts cache reads (it read about 30× too high), and an agent continued over several turns counts as one run, timed per turn.
 - **0.6.0:** honest numbers: the gateway's own saving apart from what all subagents keep out, each agent's starting context no longer counted, no estimated time; a new history starts, as the old one credited every subagent to the gateway. More hand-offs: a hand-off rule in the system prompt, look-only `general-purpose` tasks on Haiku, a tip and a count when the main conversation reads 5 files in a row, plainer worker descriptions.
 - **0.5.1:** savings from several open sessions add up, where the last session to write used to overwrite the others.
 - **0.5.0:** the Agents view: a live tree of every running agent, nested sub-agents and teammates, opened from the band's chip.

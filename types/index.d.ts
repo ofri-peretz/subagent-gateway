@@ -57,6 +57,8 @@ export type SpawnedAgent = {
   isCounted: boolean
   isRouted: boolean
   base: number | null
+  /** Whether a turn of this agent has completed: a continued agent is one run, not one per turn. Default false. */
+  hasRun?: boolean
 }
 
 // One agent the engine lists: its parent (null under the main conversation),

@@ -161,7 +161,7 @@ test('a worker counts for the gateway, a built-in agent only for all subagents',
   const builtin = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix the flaky test' }))
   clock.advance(10_000)
   await $.turn.complete(done(worker.agentId, { input_tokens: 1_000, cache_creation_input_tokens: 39_000 }))
-  await $.turn.complete(done(builtin.agentId, { input_tokens: 0, cache_creation_input_tokens: 101_000 }))
+  await $.turn.complete(done(builtin.agentId, { input_tokens: 0, cache_creation_input_tokens: 101_000, cache_read_input_tokens: 5_000_000 }))
   await $.turn.complete(done(undefined))
 
   const top = await $.ui.mount(band('terminal'))
@@ -174,6 +174,16 @@ test('a worker counts for the gateway, a built-in agent only for all subagents',
   const [day] = clock.store.get() as any[]
   expect(day.moved).toBe(101_010)
   expect([day.workerRuns, day.builtinRuns, day.parallelMs]).toEqual([1, 1, 10_000])
+})
+
+test('a continued agent counts as one run', async ($, on) => {
+  const clock = engine(on)
+  const builtin = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix the flaky test' }))
+  await $.turn.complete(done(builtin.agentId, { input_tokens: 0, cache_creation_input_tokens: 50_000 }))
+  await $.turn.complete(done(builtin.agentId, { input_tokens: 0, cache_creation_input_tokens: 50_000 }))
+  await $.turn.complete(done(undefined))
+  const [day] = clock.store.get() as any[]
+  expect(day.builtinRuns).toBe(1)
 })
 
 test('an agent\'s starting context is not counted as kept out', async ($, on) => {
