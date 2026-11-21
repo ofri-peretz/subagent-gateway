@@ -1,6 +1,6 @@
 {
   "name": "subagent-gateway",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Read-only Haiku workers keep your main conversation small, a live view shows every agent, and token savings are counted honestly.",
   "types": "./types/index.d.ts",
   "author": {
@@ -21,5 +21,8 @@
     "interlace"
   ],
   "icon": "./.claude-plugin/icon.png",
-  "displayName": "Subagent Gateway"
+  "displayName": "Subagent Gateway",
+  "documentationUrl": "https://github.com/ofri-peretz/subagent-gateway#readme",
+  "supportUrl": "https://github.com/ofri-peretz/subagent-gateway/issues",
+  "privacyPolicyUrl": "https://github.com/ofri-peretz/subagent-gateway#privacy-and-cost"
 }

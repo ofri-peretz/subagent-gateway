@@ -1,5 +1,3 @@
-<img src=".claude-plugin/icon.png" alt="Interlace" width="72" align="right">
-
 # Subagent Gateway
 
 [![check](https://github.com/ofri-peretz/subagent-gateway/actions/workflows/check.yml/badge.svg)](https://github.com/ofri-peretz/subagent-gateway/actions/workflows/check.yml)
@@ -8,7 +6,7 @@
 
 Every reply re-reads your whole conversation, so every file dump and log you pull in costs you again on each turn. Subagent Gateway hands that reading to read-only Haiku workers, which read in their own context and return a short report. Your conversation stays on the model you chose. A live view shows every running agent, warns when two of them edit the same file, and the savings are counted from real token usage.
 
-![The Agents view and the band above the prompt, with example values](docs/preview.svg)
+![The Agents view and the band above the prompt, with example values](https://raw.githubusercontent.com/ofri-peretz/subagent-gateway/main/docs/preview.png)
 
 Part of [Interlace](https://interlace.tools): check what coding agents ship.
 

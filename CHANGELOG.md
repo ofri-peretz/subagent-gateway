@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- The seven workers ship as agent files (`agents/*.md`), so plugin listings show them; CI checks they match the rules.
+- README images are plain Markdown with a PNG preview, so listings that don't draw HTML or SVG show them.
+- Documentation, support and privacy links in the manifest for directory listings.
+
 ## 1.0.0
 
 - **`mcp-reader`**, a seventh read-only worker for mail, Slack, analytics and other connected (MCP) tools. Its guard lets through only tools whose action searches, lists, gets or reads.

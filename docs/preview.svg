@@ -8,7 +8,7 @@
   <circle cx="24" cy="22" r="6" fill="#f08a80"/><circle cx="44" cy="22" r="6" fill="#e0a447"/><circle cx="64" cy="22" r="6" fill="#5cc49b"/>
   <text x="860" y="26" class="dim cap" text-anchor="end">example values</text>
 
-  <rect x="24" y="48" width="872" height="236" rx="10" fill="none" stroke="#2c3531"/>
+  <rect x="24" y="48" width="872" height="244" rx="10" fill="none" stroke="#2c3531"/>
   <text x="44" y="78" class="bold" style="fill:#f08f66">Agents</text>
   <text x="44" y="102" class="dim">2 running · 1 idle or done</text>
   <text x="44" y="130"><tspan class="son bold">● </tspan><tspan class="bold">general-purpose</tspan><tspan class="ok"> · running</tspan><tspan class="dim"> · 1m · 48K new · ctx 61K</tspan></text>
@@ -21,9 +21,9 @@
   <text x="44" y="276"><tspan class="ok bold">▲ </tspan><tspan class="bold">log-reader</tspan><tspan> · ✓</tspan><tspan class="dim"> · 42s · 31K new · ctx 35K</tspan></text>
 
   <rect x="24" y="306" width="872" height="44" rx="8" fill="#1a201d" stroke="#2c3531"/>
-  <rect x="34" y="316" width="214" height="24" rx="4" fill="#8aa5f0"/>
+  <rect x="34" y="316" width="278" height="24" rx="4" fill="#8aa5f0"/>
   <text x="44" y="333" class="chip">⬡ general-purpose ● 1m +1 ⚠2</text>
-  <text x="262" y="333"><tspan class="dim">prompt </tspan><tspan class="ok bold">42K</tspan><tspan class="dim">  today </tspan><tspan class="ok bold">180K</tspan><tspan class="dim"> by gateway</tspan></text>
-  <text x="582" y="333"><tspan class="dim">5h </tspan><tspan class="ok bold">62%</tspan><tspan class="warn"> → out 15:40</tspan><tspan class="dim">  Week </tspan><tspan class="ok bold">49%</tspan></text>
+  <text x="326" y="333"><tspan class="dim">prompt </tspan><tspan class="ok bold">42K</tspan><tspan class="dim">  today </tspan><tspan class="ok bold">180K</tspan><tspan class="dim"> by gateway</tspan></text>
+  <text x="646" y="333"><tspan class="dim">5h </tspan><tspan class="ok bold">62%</tspan><tspan class="warn"> → out 15:40</tspan><tspan class="dim">  Week </tspan><tspan class="ok bold">49%</tspan></text>
   <text x="44" y="390" class="dim cap">The Agents view (top) and the band above the prompt (bottom). ▲ Haiku · ● Sonnet · ⚠ two agents edited one file.</text>
 </svg>

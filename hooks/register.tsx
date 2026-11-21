@@ -276,9 +276,6 @@ export const register: Register = on => {
       name: 'gateway',
       description: 'Gateway: `/gateway` opens savings, `/gateway agents [word]` the agents (only those matching the word), `/gateway off` or `on` toggles the workers and routing',
     })
-    for (const worker of WORKERS) {
-      await $.agent.register(worker).catch(() => null)
-    }
     const stored = await $.store.get(DAYS_KEY).catch(() => undefined)
     if (Array.isArray(stored)) await update($, days, () => (stored as Day[]).map(normalizeDay))
     await refresh($)
