@@ -45,7 +45,7 @@ const done = (agentId: string | undefined, usage?: Record<string, unknown>) =>
   }) as any
 
 // Stands in for the engine beneath the plugin: each spawn starts a new agent id.
-const engine = (on: any) => {
+const engine = (on: any, toolResult: unknown = {}) => {
   let next = 0
   let now = NOW
   const listed: any[] = []
@@ -61,7 +61,7 @@ const engine = (on: any) => {
     if (one) one.status = 'completed'
     return { text: '' }
   })
-  on('tool.call', () => ({ result: {} }))
+  on('tool.call', () => ({ result: toolResult }))
   let stored: unknown
   on('store.get', () => ({ value: stored }))
   on('store.set', (_: unknown, e: any) => {
@@ -370,5 +370,82 @@ test('the agents view shows each agent\'s new tokens and context so far', async 
   }
   const pane = await $.ui.mount(AGENTS('desktop'))
   expect((await pane.find({ type: 'Text', text: /new · ctx/ }))?.text).toContain('13K new · ctx 42K')
+  await pane.unmount()
+})
+
+const toastsOf = (on: any) => {
+  const toasts: string[] = []
+  on('ui.toast', (_: unknown, e: any) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  return toasts
+}
+
+test('one large read in the main conversation counts as a missed hand-off, naming the worker that fits', async ($, on) => {
+  const clock = engine(on, { text: 'x'.repeat(60_000) })
+  const toasts = toastsOf(on)
+  on('prompt.submit', (_: unknown, e: any) => ({ text: e.text }))
+  await $.prompt.submit({ text: 'read the mail' } as any)
+  await $.tool.call({ tool: 'mcp__gmail__search_threads' } as any)
+  await $.tool.call({ tool: 'mcp__gmail__label_thread' } as any)
+  await $.turn.complete(done(undefined))
+
+  expect((clock.store.get() as any[])[0].missed).toBe(1)
+  expect(toasts).toEqual(['That read put about 15K tokens into this conversation: mcp-reader could have kept it out.'])
+})
+
+test('a worker its guard refused is not counted as a hand-off', async ($, on) => {
+  const clock = engine(on)
+  const worker = await $.agent.spawn(spawn('subagent-gateway:repo-searcher'))
+  const other = await $.agent.spawn(spawn('general-purpose', { prompt: 'fix it', description: 'fix it' }))
+  expect((await $.tool.call({ tool: 'Bash', command: 'rm -rf src', agentId: worker.agentId } as any)).deny).toContain('read-only')
+  await $.turn.complete(done(worker.agentId, { input_tokens: 0, cache_creation_input_tokens: 50_000 }))
+  await $.turn.complete(done(other.agentId, { input_tokens: 0, cache_creation_input_tokens: 50_000 }))
+  await $.turn.complete(done(undefined))
+
+  const [day] = clock.store.get() as any[]
+  expect([day.gateway, day.workerRuns, day.builtinRuns]).toEqual([0, 0, 1])
+})
+
+test('edits with no test, lint or type check get one tip at the end of the prompt', async ($, on) => {
+  engine(on)
+  const toasts = toastsOf(on)
+  on('prompt.submit', (_: unknown, e: any) => ({ text: e.text }))
+  await $.prompt.submit({ text: 'fix it' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/a.ts' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/b.ts' } as any)
+  await $.turn.complete(done(undefined))
+  await $.prompt.submit({ text: 'fix it again' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/a.ts' } as any)
+  await $.tool.call({ tool: 'Bash', command: 'pnpm check-types' } as any)
+  await $.turn.complete(done(undefined))
+
+  expect(toasts).toEqual(['2 edits and no test, lint or type check since the prompt: run them before calling it done.'])
+})
+
+test('polling with sleep and many agents at once each get one tip', async ($, on) => {
+  engine(on)
+  const toasts = toastsOf(on)
+  on('prompt.submit', (_: unknown, e: any) => ({ text: e.text }))
+  await $.prompt.submit({ text: 'wait for CI' } as any)
+  await $.tool.call({ tool: 'Bash', command: 'until gh pr checks 1; do sleep 30; done' } as any)
+  await $.tool.call({ tool: 'Bash', command: 'sleep 60' } as any)
+  for (let i = 0; i < 7; i++) await $.agent.spawn(spawn('Explore'))
+
+  expect(toasts).toEqual([
+    'Waiting with sleep: run the command in the background and let its notification say when it ends.',
+    '6 agents running at once: check each one is needed, they all draw on your usage limit.',
+  ])
+})
+
+test('/gateway agents with a word shows only the agents whose task, type or files match', async ($, on) => {
+  engine(on)
+  await $.agent.spawn(spawn('general-purpose', { prompt: 'fix login', description: 'fix the login form' }))
+  await $.agent.spawn(spawn('Explore', { description: 'find the billing spec' }))
+  await $.command.run({ command: 'gateway', args: 'agents login' } as any)
+  const pane = await $.ui.mount(AGENTS('desktop'))
+  expect((await pane.find({ type: 'Text', text: /match/ }))?.text).toBe('1 of 2 agents match "login" · /gateway agents shows all')
+  expect(await pane.find({ type: 'Text', text: /billing/ })).toBeFalsy()
   await pane.unmount()
 })

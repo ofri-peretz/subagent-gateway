@@ -111,9 +111,31 @@ export const WORKERS = [
     model: 'haiku',
     effort: 'low',
   },
+  {
+    // Like ticket-reader, it gets the parent's tools: connected tools have a name per machine.
+    name: 'mcp-reader',
+    description:
+      'Use first to search or read mail, Slack, analytics, logs services or other connected (MCP) tools: returns only what answers the question. Read-only.',
+    prompt:
+      'Use the connected tools you are given only to search, list, get or read. Answer the question with the few facts that matter, each with where it came from (thread, message, query). Do not send, label, edit, create or delete anything.',
+    disallowedTools: ['Edit', 'Write', 'NotebookEdit', 'Bash'],
+    model: 'haiku',
+    effort: 'low',
+  },
 ] as const
 
 export const isWorker = (type: string | undefined) => (type ?? '').startsWith('subagent-gateway:')
+
+// A connected tool's action, after an optional service prefix ("slack_read_thread"):
+// only these verbs read. `exec`, `send`, `label`, `navigate`, `click` and the rest do not.
+const MCP_READ = /^(?:[a-zA-Z0-9]+[_-])?(get|search|list|fetch|lookup|read|query|find|describe|count|take_snapshot|take_screenshot)(?:[_-]|[A-Z]|$)/
+
+/** Whether a connected (MCP) tool call only reads, judged by its action's name; `server` narrows which servers count. */
+export function isMcpRead(tool: string, server?: RegExp): boolean {
+  const mcp = /^mcp__(.+)__([^_].*)$/.exec(tool)
+
+  return mcp !== null && (server === undefined || server.test(mcp[1] ?? '')) && MCP_READ.test(mcp[2] ?? '')
+}
 
 // Commands a reading worker may run. git and gh only through their read subcommands.
 const READ_WORDS = new Set(['cat', 'ls', 'grep', 'rg', 'find', 'head', 'tail', 'wc', 'jq', 'sort', 'uniq', 'cut', 'tr', 'echo', 'pwd'])
@@ -144,11 +166,14 @@ export function checkWorkerCall(worker: string, tool: string, command?: string):
 
   if (name === 'ticket-reader') {
     if (['Read', 'Grep', 'Glob', 'ToolSearch'].includes(tool)) return null
-    const mcp = /^mcp__(.+)__([^_].*)$/.exec(tool)
-    const isAtlassianRead =
-      mcp !== null && /atlassian|jira|confluence/i.test(mcp[1] ?? '') && /^(get|search|list|fetch|lookup|read)/i.test(mcp[2] ?? '')
 
-    return isAtlassianRead ? null : `ticket-reader only reads Jira and Confluence; ${tool} is not allowed.`
+    return isMcpRead(tool, /atlassian|jira|confluence/i) ? null : `ticket-reader only reads Jira and Confluence; ${tool} is not allowed.`
+  }
+
+  if (name === 'mcp-reader') {
+    if (['Read', 'Grep', 'Glob', 'ToolSearch'].includes(tool)) return null
+
+    return isMcpRead(tool) ? null : `mcp-reader only searches, lists, gets and reads; ${tool} is not allowed.`
   }
 
   if (tool !== 'Bash' || command === undefined) return null
@@ -172,7 +197,7 @@ const SETUP = /^(cd\s|[A-Za-z_]\w*=|#|$)/
  * Only counts, never allows: a chained shell command counts when every step reads.
  */
 export function isReadCall(tool: string, command?: string): boolean {
-  if (['Read', 'Grep', 'Glob'].includes(tool)) return true
+  if (['Read', 'Grep', 'Glob'].includes(tool) || isMcpRead(tool)) return true
   if (tool !== 'Bash' || command === undefined || /[^2]>|`|\$\(/.test(command.replace(/2>&1|2>\/dev\/null/g, ''))) return false
   const steps = command.split(/&&|\|\||;|\||\n/).map(step => step.trim()).filter(step => !SETUP.test(step))
 
@@ -182,9 +207,37 @@ export function isReadCall(tool: string, command?: string): boolean {
 // Reads in a row in the main conversation that count as a missed hand-off.
 export const MISSED_AT = 5
 
+// One read in the main conversation this large counts as a missed hand-off too.
+export const MISSED_TOKENS = 8_000
+
+/** About how many tokens a tool's result holds. */
+export const resultTokens = (result: unknown) => (result === undefined ? 0 : Math.ceil(JSON.stringify(result).length / 4))
+
+/** The worker that should have taken a main-conversation read. */
+export const workerFor = (tool: string) => (tool.startsWith('mcp__') ? (/atlassian|jira|confluence/i.test(tool) ? 'ticket-reader' : 'mcp-reader') : 'repo-searcher')
+
+// Commands that check work: tests, lint, type checks, builds.
+const CHECKS = /\b(test|vitest|jest|cypress|newman|pytest|lint|eslint|oxlint|tsc|tsrs|check-types|typecheck|go test|cargo (test|check)|build)\b/
+/** Whether a shell command checks the work: a test, lint, type check or build. */
+export const isCheck = (command: string) => CHECKS.test(command)
+
+// Long-running and CPU-heavy: test suites and installs.
+const HEAVY = /\b((pnpm|npm|yarn|bun)( run)? (test|install|ci|i)\b|npx (vitest|jest|cypress)|vitest run|jest\b|cypress run)/
+/** Whether a shell command is heavy: a test suite or an install. */
+export const isHeavy = (command: string) => HEAVY.test(command)
+
+// A sleep loop or a fixed sleep: waiting by polling instead of by notification.
+const POLL = /(^|[;&|\s])sleep\s+\d|\b(until|while)\b[^\n]*\bsleep\b/
+/** Whether a shell command waits by polling. */
+export const isPolling = (command: string) => POLL.test(command)
+
+// Agents running at once past which a fan-out is worth a look, and heavy commands past which the machine slows.
+export const FAN_OUT_AT = 6
+export const HEAVY_AT = 3
+
 // Added to the main conversation's system prompt while the gateway is on.
 export const HANDOFF_RULE =
-  'Hand reading to the subagent-gateway workers: searches to repo-searcher, logs to log-reader, test runs to test-runner, docs and the web to docs-reader, diffs and pull requests to diff-reader, Jira and Confluence to ticket-reader. Run independent ones in parallel. Read in this conversation only the files you are about to change.'
+  'Hand reading to the subagent-gateway workers: searches to repo-searcher, logs to log-reader, test runs to test-runner, docs and the web to docs-reader, diffs and pull requests to diff-reader, Jira and Confluence to ticket-reader, mail, Slack and other connected tools to mcp-reader. Run independent ones in parallel. Read in this conversation only the files you are about to change.'
 
 // About four characters to a token: close enough for a report's size.
 const tokensOf = (text: string) => Math.ceil(text.length / 4)
@@ -249,6 +302,7 @@ export const DAYS_KEPT = 365
 
 /** Adds one prompt's saving to the day it happened on, keeping DAYS_KEPT days. */
 export function addToDays(days: readonly Day[], date: string, tally: Tally, byAgent: Record<string, number>): Day[] {
+  days = days.map(normalizeDay)
   const today = days.find(one => one.date === date)
   const merged: Day = today
     ? {
@@ -265,6 +319,9 @@ export function addToDays(days: readonly Day[], date: string, tally: Tally, byAg
 
   return [...days.filter(one => one.date !== date), merged].sort((a, b) => a.date.localeCompare(b.date)).slice(-DAYS_KEPT)
 }
+
+/** A stored day with every count present: rows written by an older version miss newer fields. */
+export const normalizeDay = (day: Partial<Day> & { date: string }): Day => ({ ...NO_TALLY, byAgent: {}, ...day })
 
 export const sumDays = (days: readonly Day[]) => days.reduce<Tally>((sum, one) => addTally(sum, one), NO_TALLY)
 

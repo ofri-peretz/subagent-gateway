@@ -9,7 +9,7 @@
     {
       "name": "subagent-gateway",
       "source": "./",
-      "description": "Hands repo searches, logs, test runs, diffs, docs and tickets to read-only Haiku workers so your main conversation stays small, shows every running agent live and flags two agents editing the same file, and counts the tokens it kept out, honestly",
+      "description": "Read-only Haiku workers keep your main conversation small, a live view shows every agent, and token savings are counted honestly.",
       "category": "productivity",
       "keywords": [
         "subagents",
@@ -21,7 +21,8 @@
         "read-only",
         "interlace"
       ],
-      "homepage": "https://github.com/ofri-peretz/subagent-gateway#readme"
+      "homepage": "https://github.com/ofri-peretz/subagent-gateway#readme",
+      "version": "1.0.0"
     }
   ]
 }

@@ -99,6 +99,7 @@ declare module 'claude-code' {
       live: Shaped<LiveAgent[]>
       limitStarts: Shaped<Record<string, LimitStart>>
       activity: Shaped<Record<string, Activity>>
+      agentFilter: string
     }
   }
 }

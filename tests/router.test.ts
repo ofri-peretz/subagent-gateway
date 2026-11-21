@@ -1,6 +1,13 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  isCheck,
+  isHeavy,
+  isMcpRead,
+  isPolling,
+  normalizeDay,
+  resultTokens,
+  workerFor,
   WORKERS,
   addToDays,
   checkWorkerCall,
@@ -17,7 +24,7 @@ import {
 } from '../hooks/rules'
 
 test('the workers are Haiku agents that say when to use them', async () => {
-  expect(WORKERS.map(one => one.name)).toEqual(['repo-searcher', 'log-reader', 'test-runner', 'docs-reader', 'diff-reader', 'ticket-reader'])
+  expect(WORKERS.map(one => one.name)).toEqual(['repo-searcher', 'log-reader', 'test-runner', 'docs-reader', 'diff-reader', 'ticket-reader', 'mcp-reader'])
   for (const worker of WORKERS) {
     expect(worker.model).toBe('haiku')
     expect(worker.description).toContain('Use ')
@@ -134,4 +141,37 @@ test('words that only start with the letter are left alone', async () => {
   expect(parsePrefix('s3 bucket is empty')).toBe(null)
   expect(parsePrefix('show the logs')).toBe(null)
   expect(parsePrefix('o')).toBe(null)
+})
+
+test('mcp-reader may search, list, get and read connected tools, and nothing that sends, labels or runs', async () => {
+  for (const tool of ['mcp__gmail__search_threads', 'mcp__gmail__get_thread', 'mcp__claude_ai_Slack__slack_read_thread', 'mcp__posthog__query', 'mcp__claude-in-chrome__get_page_text', 'mcp__notion__notion-search', 'Read', 'ToolSearch']) {
+    expect(checkWorkerCall('subagent-gateway:mcp-reader', tool)).toBe(null)
+  }
+  for (const tool of ['mcp__gmail__label_thread', 'mcp__gmail__send_message', 'mcp__claude_ai_Slack__slack_send_message', 'mcp__posthog__exec', 'mcp__claude-in-chrome__navigate', 'mcp__chrome-devtools__click', 'Bash', 'Edit']) {
+    expect(checkWorkerCall('subagent-gateway:mcp-reader', tool)).toContain('only searches')
+  }
+})
+
+test('connected-tool reads count as reads for missed hand-offs, and name the worker that fits', async () => {
+  expect(isMcpRead('mcp__gmail__search_threads')).toBe(true)
+  expect(isMcpRead('mcp__gmail__label_thread')).toBe(false)
+  expect(isReadCall('mcp__claude_ai_Slack__slack_search_public')).toBe(true)
+  expect(workerFor('mcp__gmail__search_threads')).toBe('mcp-reader')
+  expect(workerFor('mcp__claude_ai_Atlassian_MCP__getJiraIssue')).toBe('ticket-reader')
+  expect(workerFor('Read')).toBe('repo-searcher')
+  expect(resultTokens({ text: 'x'.repeat(40_000) })).toBeGreaterThan(10_000)
+})
+
+test('checks, heavy commands and polling are told apart', async () => {
+  expect([isCheck('pnpm test'), isCheck('pnpm check-types'), isCheck('npx vitest run src'), isCheck('ls src')]).toEqual([true, true, true, false])
+  expect([isHeavy('pnpm install'), isHeavy('npm ci'), isHeavy('npx vitest run'), isHeavy('git status')]).toEqual([true, true, true, false])
+  expect([isPolling('sleep 30'), isPolling('until gh pr checks 1; do sleep 10; done'), isPolling('echo asleep'), isPolling('git log')]).toEqual([true, true, false, false])
+})
+
+test('a day stored by an older version gets every count, so an upgrade never loses history', async () => {
+  const old = { date: '2026-11-20', gateway: 100, subagents: 200 } as any
+  expect(normalizeDay(old)).toEqual({ date: '2026-11-20', gateway: 100, subagents: 200, moved: 0, parallelMs: 0, workerRuns: 0, builtinRuns: 0, missed: 0, byAgent: {} })
+  expect(addToDays([old], '2026-11-20', { gateway: 1, subagents: 1, moved: 0, parallelMs: 0, workerRuns: 1, builtinRuns: 0, missed: 0 }, { 'repo-searcher': 1 })[0]).toEqual({
+    date: '2026-11-20', gateway: 101, subagents: 201, moved: 0, parallelMs: 0, workerRuns: 1, builtinRuns: 0, missed: 0, byAgent: { 'repo-searcher': 1 },
+  })
 })

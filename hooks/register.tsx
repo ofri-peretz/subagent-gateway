@@ -3,6 +3,15 @@ import type { Color, ElementTable, EngineInterface, Register, RenderSurface, Tim
 
 import type { Activity, Day, Entry, LimitStart, LiveAgent, SpawnedAgent, Tally, Usage } from '../types'
 import {
+  FAN_OUT_AT,
+  HEAVY_AT,
+  isCheck,
+  isHeavy,
+  isPolling,
+  MISSED_TOKENS,
+  normalizeDay,
+  resultTokens,
+  workerFor,
   baseName,
   clashesWith,
   MAIN,
@@ -49,6 +58,7 @@ const days = atom({ plugin: 'subagent-gateway', key: 'days' } as const, [] as Da
 // Every agent the engine lists now, as of the last refresh: subagents, nested ones and teammates.
 const live = atom({ plugin: 'subagent-gateway', key: 'live' } as const, [] as LiveAgent[], { shape: 'live-1' })
 const activity = atom({ plugin: 'subagent-gateway', key: 'activity' } as const, {} as Record<string, Activity>, { shape: 'activity-1' })
+const agentFilter = atom({ plugin: 'subagent-gateway', key: 'agentFilter' } as const, '')
 const limitStarts = atom({ plugin: 'subagent-gateway', key: 'limitStarts' } as const, {} as Record<string, LimitStart>, { shape: 'limit-starts-1' })
 // The store key that keeps `days` between sessions. days-1 held the 0.5 counting,
 // which credited every subagent to the gateway, so 0.6 starts a new history.
@@ -220,6 +230,39 @@ async function track($: EngineInterface, id: string, tool: string, path: string 
   }
 }
 
+// Reads in a row in the main conversation, and the tips this prompt already showed.
+let readStreak = 0
+let tipped = new Set<string>()
+// Files edited and whether any test, lint or type check ran, since the prompt.
+let editCount = 0
+let hasChecked = false
+// Test suites and installs running right now, in any agent.
+let heavyRunning = 0
+
+// Shows a tip once per prompt.
+function tip($: EngineInterface, key: string, text: string) {
+  if (tipped.has(key)) return
+  tipped.add(key)
+  $.ui.toast(text)
+}
+
+function noteWork(tool: string, path: string | undefined, command: string | undefined) {
+  if (WRITE_TOOLS.has(tool) && path !== undefined) editCount += 1
+  if (command !== undefined && isCheck(command)) hasChecked = true
+}
+
+// Runs a tool call, counting it among the heavy ones while it runs.
+async function runHeavy<T>($: EngineInterface, command: string | undefined, run: () => Promise<T>): Promise<T> {
+  if (command === undefined || !isHeavy(command)) return run()
+  heavyRunning += 1
+  if (heavyRunning >= HEAVY_AT) tip($, 'heavy', `${heavyRunning} test runs or installs at once: each slows the others. Let one finish before starting the next.`)
+  try {
+    return await run()
+  } finally {
+    heavyRunning -= 1
+  }
+}
+
 export const register: Register = on => {
   // The model an o/s/h prefix chose for the current prompt; cleared when its turn
   // ends, so a prefix never carries into a command, a notification or the next prompt.
@@ -228,20 +271,16 @@ export const register: Register = on => {
   let turnTally: Tally = NO_TALLY
   let turnRuns: { start: number; end: number }[] = []
   let turnByAgent: Record<string, number> = {}
-  // Reads in a row in the main conversation, and whether this prompt was nudged already.
-  let readStreak = 0
-  let hasNudged = false
-
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'gateway',
-      description: 'Gateway: `/gateway` opens savings, `/gateway agents` the running agents, `/gateway off` or `on` toggles the workers and routing',
+      description: 'Gateway: `/gateway` opens savings, `/gateway agents [word]` the agents (only those matching the word), `/gateway off` or `on` toggles the workers and routing',
     })
     for (const worker of WORKERS) {
       await $.agent.register(worker).catch(() => null)
     }
     const stored = await $.store.get(DAYS_KEY).catch(() => undefined)
-    if (Array.isArray(stored)) await update($, days, () => stored as Day[])
+    if (Array.isArray(stored)) await update($, days, () => (stored as Day[]).map(normalizeDay))
     await refresh($)
     const now = await $.session.usage().catch(() => null)
     if (now) {
@@ -269,26 +308,49 @@ export const register: Register = on => {
     const path = 'file_path' in e && typeof e.file_path === 'string' ? e.file_path : 'notebook_path' in e && typeof e.notebook_path === 'string' ? e.notebook_path : undefined
 
     if (e.agentId === undefined) {
-      readStreak = isReadCall(e.tool, command) ? readStreak + 1 : 0
-      if (readStreak === MISSED_AT && !(await read($, isOff))) {
-        turnTally = { ...turnTally, missed: turnTally.missed + 1 }
-        if (!hasNudged) {
-          hasNudged = true
-          $.ui.toast(`${MISSED_AT} reads in a row here: repo-searcher could do this and keep the files out of this conversation.`)
-        }
+      const off = await read($, isOff)
+      const isRead = isReadCall(e.tool, command)
+      readStreak = isRead ? readStreak + 1 : 0
+      if (command !== undefined && isPolling(command)) {
+        tip($, 'poll', 'Waiting with sleep: run the command in the background and let its notification say when it ends.')
       }
-
+      noteWork(e.tool, path, command)
       await track($, MAIN, e.tool, path, command).catch(() => null)
 
-      return next(e)
+      const result = await runHeavy($, command, () => next(e))
+      // After the tool ran nothing may throw: the catch below would run it again.
+      try {
+        const size = 'result' in result ? resultTokens(result.result) : 0
+        if (isRead && !off && (readStreak === MISSED_AT || size >= MISSED_TOKENS)) {
+          turnTally = { ...turnTally, missed: turnTally.missed + 1 }
+          tip(
+            $,
+            'missed',
+            readStreak === MISSED_AT
+              ? `${MISSED_AT} reads in a row here: repo-searcher could do this and keep the files out of this conversation.`
+              : `That read put about ${tokenText(size)} tokens into this conversation: ${workerFor(e.tool)} could have kept it out.`,
+          )
+        }
+      } catch {}
+
+      return result
     }
 
-    const info = (await read($, agents))[e.agentId]
+    const id = e.agentId
+    const info = (await read($, agents))[id]
     const reason = info && isWorker(info.type) ? checkWorkerCall(info.type, e.tool, command) : null
-    if (reason) return { deny: reason }
-    await track($, e.agentId, e.tool, path, command).catch(() => null)
+    if (reason) {
+      // A worker that tried to step outside read-only is not counted as a hand-off.
+      await update($, agents, all => {
+        const own = all[id]
+        return own ? { ...all, [id]: { ...own, isCounted: false } } : all
+      })
+      return { deny: reason }
+    }
+    noteWork(e.tool, path, command)
+    await track($, id, e.tool, path, command).catch(() => null)
 
-    return next(e)
+    return runHeavy($, command, () => next(e))
   }).catch(($, e, next) =>
     // Counting never blocks the main conversation; a worker's call fails closed.
     next.called || e.agentId === undefined ? next(e) : { deny: `${$.plugin.name}: its read-only guard failed, so the call was refused.` },
@@ -317,6 +379,9 @@ export const register: Register = on => {
       },
     }))
     await refresh($)
+    if (e.subagentType === 'subagent-gateway:test-runner') hasChecked = true
+    const running = busyOf(await read($, live)).length
+    if (running >= FAN_OUT_AT) tip($, 'fan-out', `${running} agents running at once: check each one is needed, they all draw on your usage limit.`)
 
     return result
   }).catch((_$, e, next) => next(e))
@@ -393,6 +458,12 @@ export const register: Register = on => {
       return result
     }
 
+    if (editCount > 0 && !hasChecked) {
+      tip($, 'unchecked', `${editCount === 1 ? '1 edit' : `${editCount} edits`} and no test, lint or type check since the prompt: run them before calling it done.`)
+    }
+    editCount = 0
+    hasChecked = false
+
     const tally: Tally = { ...turnTally, parallelMs: parallelTime(turnRuns) }
     const byAgent = turnByAgent
     turnModel = null
@@ -408,7 +479,7 @@ export const register: Register = on => {
       })
       // Other sessions write the same store: merge into what it holds now, not this session's copy.
       const stored = await $.store.get(DAYS_KEY).catch(() => undefined)
-      const base = Array.isArray(stored) ? (stored as Day[]) : await read($, days)
+      const base = Array.isArray(stored) ? (stored as Day[]).map(normalizeDay) : await read($, days)
       const updated = addToDays(base, dateOf(now), tally, byAgent)
       await update($, days, () => updated)
       await $.store.set(DAYS_KEY, updated).catch(() => null)
@@ -456,7 +527,8 @@ export const register: Register = on => {
       return { text: `Workers and subagent routing ${arg}.` }
     }
 
-    if (arg === 'agents') {
+    if (arg === 'agents' || arg.startsWith('agents ')) {
+      await update($, agentFilter, () => arg.slice('agents'.length).trim())
       await refresh($)
       await $.ui.open({ id: AGENTS_PANE, title: 'Agents' })
 
@@ -471,7 +543,11 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     turnModel = null
     readStreak = 0
-    hasNudged = false
+    tipped = new Set()
+    if (!e.command && !e.isMeta) {
+      editCount = 0
+      hasChecked = false
+    }
     if (e.command || e.isMeta) return next(e)
 
     // Only a prefix moves the main conversation off the session model.
@@ -725,14 +801,22 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const all = await read($, live)
     const busy = busyOf(all)
-    const rows = treeOf(all)
     const acts = await read($, activity)
+    const filter = (await read($, agentFilter)).toLowerCase()
+    // Filtered, the tree goes flat: a match's parent may not match.
+    const matches = (one: LiveAgent) =>
+      [one.type, one.label, ...Object.keys(acts[one.id]?.files ?? {})].some(text => text.toLowerCase().includes(filter))
+    const rows = filter ? all.filter(matches).map(agent => ({ agent, depth: 0 })) : treeOf(all)
 
     return (
       <Box flexDirection="column" gap="sm">
         <Text bold size="heading" color="claude">Agents</Text>
         <Text dimColor>
-          {all.length === 0 ? 'No agents in this session yet.' : `${busy.length} running · ${all.length - busy.length} idle or done`}
+          {all.length === 0
+            ? 'No agents in this session yet.'
+            : filter
+              ? `${rows.length} of ${all.length} agents match "${filter}" · /gateway agents shows all`
+              : `${busy.length} running · ${all.length - busy.length} idle or done`}
         </Text>
         {rows.length > 0 && (
           <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX="sm">

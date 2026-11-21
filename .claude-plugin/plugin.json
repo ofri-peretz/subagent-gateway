@@ -1,7 +1,7 @@
 {
   "name": "subagent-gateway",
-  "version": "0.7.0",
-  "description": "Hands repo searches, logs, test runs, diffs, docs and tickets to read-only Haiku workers so your main conversation stays small, shows every running agent live and flags two agents editing the same file, and counts the tokens it kept out, honestly",
+  "version": "1.0.0",
+  "description": "Read-only Haiku workers keep your main conversation small, a live view shows every agent, and token savings are counted honestly.",
   "types": "./types/index.d.ts",
   "author": {
     "name": "Ofri Peretz · Interlace",
@@ -20,5 +20,6 @@
     "read-only",
     "interlace"
   ],
-  "icon": "./.claude-plugin/icon.png"
+  "icon": "./.claude-plugin/icon.png",
+  "displayName": "Subagent Gateway"
 }
