@@ -1,0 +1,15 @@
+{
+  "name": "subagent-gateway-dev",
+  "private": true,
+  "description": "Git hooks only. The plugin itself has no dependencies; this file exists so lefthook and commitlint run the hookset presets.",
+  "scripts": {
+    "prepare": "lefthook install || true",
+    "hook:staged": "sh -c 'node --experimental-strip-types scripts/agents.mjs --check' hook-staged",
+    "hook:verify": "claude plugin validate --strict . && claude plugin test ."
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.4.0",
+    "@commitlint/config-conventional": "^20.4.0",
+    "lefthook": "^2.2.2"
+  }
+}
