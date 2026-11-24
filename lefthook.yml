@@ -11,3 +11,11 @@ remotes:
 
 # Repo-specific steps go below, under the hook they belong to. The presets call the repo's own
 # `hook:staged` and `hook:verify` scripts (package.json), so most repos need nothing here.
+
+commit-msg:
+  commands:
+    # Local until hookset@0.4.0, whose commit-msg preset runs this same script; delete this step
+    # when `ref` moves to it (`hookset check` fails on a step that repeats a preset's).
+    provedone:
+      run: npm run --silent hook:provedone -- {1}
+      fail_text: "The message needs a receipt trailer: 'Verified-by: <command> -> exit 0' or 'Verified-by: none (<reason>)'."
