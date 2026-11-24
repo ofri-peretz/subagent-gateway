@@ -1,12 +1,1 @@
-{
-  "agents/mcp-reader.md": {
-    "conventions/subagent-declares-model": {
-      "count": 1
-    }
-  },
-  "agents/ticket-reader.md": {
-    "conventions/subagent-declares-model": {
-      "count": 1
-    }
-  }
-}
+{}
