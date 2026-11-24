@@ -9,6 +9,11 @@ remotes:
       - packages/hookset/presets/lefthook/pre-commit.yml
       - packages/hookset/presets/lefthook/pre-push.yml
 
+# pre-push also runs `truepass diff --base origin/main` through the preset's test-integrity station
+# (`npm run hook:test-integrity`): an assertion moved to a weaker matcher, or a snapshot changed with
+# no `Snapshot: <why>` line, since origin/main fails the push. `Assertion: <why>` in a commit message
+# accepts a deliberate weakening. scripts/truepass-lock.mjs (CI) keeps it wired.
+
 # Repo-specific steps go below, under the hook they belong to. The presets call the repo's own
 # `hook:staged` and `hook:verify` scripts (package.json), so most repos need nothing here.
 

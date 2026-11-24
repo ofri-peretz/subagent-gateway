@@ -17,5 +17,6 @@ jobs:
       - run: npm run lint:guidance
       - run: npm install -g @anthropic-ai/claude-code
       - run: node --experimental-strip-types scripts/agents.mjs --check
+      - run: node scripts/truepass-lock.mjs
       - run: claude plugin validate --strict .
       - run: claude plugin test .
