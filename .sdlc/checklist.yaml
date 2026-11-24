@@ -1,0 +1,72 @@
+# The review checklist (triggerlist). Each item fires only when its trigger matches the diff, so a
+# reviewer reads the handful that apply, never the whole list. CI reads this file from the base
+# branch: a pull request cannot change the checks it is held to.
+# `npx triggerlist seed` finds no lock tests or decision files here yet; these items come from
+# CONTRIBUTING.md, scripts/agents.mjs and the hookset vendoring rule. Narrow a trigger before adding one.
+
+# Files that judge code. `triggerlist protect origin/main` (pre-push, via `hook:triggerlist`) flags
+# a change that edits one of these and the code it judges together.
+gates:
+  - .sdlc/checklist.yaml
+  - lefthook.yml
+  - commitlint.config.mjs
+  - eslint.guidance.config.mjs
+  - .guidance-suppressions.json
+  - scripts/agents.mjs
+  - tests/**
+  - .github/workflows/**
+  - .claude/hooks/**
+
+items:
+  - id: agents-in-step-with-workers
+    trigger:
+      paths: ['hooks/rules.ts', 'agents/*.md']
+    question: Did WORKERS in hooks/rules.ts and the generated agents/*.md change together, with no hand edit to an agent file?
+    check: node --experimental-strip-types scripts/agents.mjs --check
+    sources: [scripts/agents.mjs]
+
+  - id: worker-guard-refusal-tested
+    trigger:
+      paths: ['hooks/rules.ts']
+      pattern: 'checkWorkerCall|isLookOnly|isReadCall|read-only'
+    question: Does a change to what a worker may run come with a test of what it must refuse?
+    check: claude plugin test .
+    sources: [CONTRIBUTING.md, tests/router.test.ts]
+
+  - id: new-worker-named-everywhere
+    trigger:
+      paths: ['hooks/rules.ts']
+      pattern: "name: '[a-z]+-[a-z]+'"
+    question: Is a new worker Haiku, described with "Use first…", named in HANDOFF_RULE and in the README's worker table?
+    check: grep -n HANDOFF_RULE hooks/rules.ts and the README worker table
+    sources: [CONTRIBUTING.md]
+
+  - id: stored-shape-has-upgrade-step
+    trigger:
+      paths: ['types/index.d.ts']
+    question: Does a change to a stored shape come with a step that reads the older one, so history survives an upgrade?
+    check: read the diff of hooks/register.tsx for the read of the older shape
+    sources: [CONTRIBUTING.md]
+
+  - id: savings-counted-not-estimated
+    trigger:
+      paths: ['hooks/rules.ts', 'hooks/register.tsx']
+      pattern: 'resultTokens|tokenText|parallelTime|runsOutAt|savings|saved'
+    question: Does a change to what is counted have a test with real-shaped usage and a line in the README's "How savings are counted"?
+    check: claude plugin test . and git diff -- README.md
+    sources: [CONTRIBUTING.md, README.md]
+
+  - id: vendored-hook-hand-edited
+    trigger:
+      paths: ['.claude/hooks/*.mjs']
+    question: Was a vendored hookset hook edited by hand instead of taken from a new hookset release?
+    check: the shared-gates hookset check fails when the copy drifts from burgee packages/hookset/claude/
+    sources: [.claude/hooks/guard-bash.mjs, '#5']
+
+  - id: hooks-bypassed
+    trigger:
+      paths: ['**']
+      pattern: '--no-verify|LEFTHOOK=0'
+    question: Does the change bypass, or teach bypassing, the git hooks that are the gate?
+    check: read the lines that fired; the hooks may never be skipped
+    sources: [lefthook.yml]

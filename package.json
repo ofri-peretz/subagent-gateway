@@ -6,7 +6,9 @@
     "prepare": "lefthook install || true",
     "hook:staged": "sh -c 'node --experimental-strip-types scripts/agents.mjs --check' hook-staged",
     "hook:verify": "npm run lint:guidance && claude plugin validate --strict . && claude plugin test .",
-    "lint:guidance": "eslint --config eslint.guidance.config.mjs --no-warn-ignored --suppressions-location .guidance-suppressions.json ."
+    "lint:guidance": "eslint --config eslint.guidance.config.mjs --no-warn-ignored --suppressions-location .guidance-suppressions.json .",
+    "hook:provedone": "provedone gate --mode enforce",
+    "hook:triggerlist": "git cat-file -e origin/main:.sdlc/checklist.yaml 2>/dev/null || { echo \"triggerlist: origin/main has no .sdlc/checklist.yaml yet, protect skipped\" >&2; exit 0; }; triggerlist protect origin/main"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.4.0",
@@ -14,6 +16,8 @@
     "@eslint/markdown": "^7.5.1",
     "eslint": "^10.15.0",
     "eslint-plugin-conventions": "^7.2.1",
-    "lefthook": "^2.2.2"
+    "lefthook": "^2.2.2",
+    "provedone": "^0.3.1",
+    "triggerlist": "^0.3.0"
   }
 }
