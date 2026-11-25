@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Load the plugin from this checkout into a real Claude Code session, run a task that routes to a worker, and read the agents view and savings. Use before committing a behaviour change.
+description: Load this checkout's plugin in a real session and read the routed task's result, before committing.
 ---
 
 # Verify a change by running it
