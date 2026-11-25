@@ -1,0 +1,14 @@
+# Code owners: a single-maintainer repo, so every path is the owner's.
+* @ofri-peretz
+
+# The gates: the files that judge code (`gates:` in .sdlc/checklist.yaml). A change to one asks
+# its owner for review, and `triggerlist protect` flags one changed together with other files.
+/.sdlc/checklist.yaml         @ofri-peretz
+/lefthook.yml                 @ofri-peretz
+/commitlint.config.mjs        @ofri-peretz
+/eslint.guidance.config.mjs   @ofri-peretz
+/.guidance-suppressions.json  @ofri-peretz
+/scripts/agents.mjs           @ofri-peretz
+/tests/**                     @ofri-peretz
+/.github/workflows/**         @ofri-peretz
+/.claude/hooks/**             @ofri-peretz
