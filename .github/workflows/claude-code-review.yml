@@ -78,9 +78,21 @@ jobs:
       # branch, the checklist items this diff fires, its own findings from the previous round and
       # the replies to them; it tags each finding Important, Nit or Pre-existing, and a review of a
       # head that moved while it ran fails instead of going green.
+      # Fetch only the action's folder: burgee carries a symlink-loop test fixture that makes the
+      # runner's whole-repository action download fail ("Too many levels of symbolic links").
+      - name: Fetch the triggerlist review action
+        if: steps.rules.outputs.present == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: ofri-peretz/burgee
+          ref: 2a3051563249415273f27b9147cfea907c8045e1 # hookset@1.1.1
+          path: .burgee
+          sparse-checkout: .github/actions/triggerlist-review
+          persist-credentials: false
+
       - name: Claude Code Review
         if: steps.rules.outputs.present == 'true'
-        uses: ofri-peretz/burgee/.github/actions/triggerlist-review@hookset@1.1.1
+        uses: ./.burgee/.github/actions/triggerlist-review
         with:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           triggerlist: npx --yes triggerlist@1
