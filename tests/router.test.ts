@@ -38,6 +38,12 @@ test('reading workers run reads and refuse writes, chains and redirects', async 
   expect(checkWorkerCall('subagent-gateway:diff-reader', 'Bash', 'git diff master | head -200')).toBe(null)
   expect(checkWorkerCall('subagent-gateway:diff-reader', 'Bash', 'gh pr diff 512')).toBe(null)
   expect(checkWorkerCall('subagent-gateway:diff-reader', 'Bash', 'git push origin HEAD')).toContain('read-only')
+  // A CI job's log is only reachable through gh api while its run is still going.
+  expect(checkWorkerCall('subagent-gateway:log-reader', 'Bash', 'gh api repos/o/r/actions/jobs/1/logs')).toBe(null)
+  expect(checkWorkerCall('subagent-gateway:log-reader', 'Bash', 'gh api -X GET repos/o/r/pulls')).toBe(null)
+  expect(checkWorkerCall('subagent-gateway:log-reader', 'Bash', 'gh api repos/o/r/issues/1/comments -f body=hi')).toContain('read-only')
+  expect(checkWorkerCall('subagent-gateway:log-reader', 'Bash', 'gh api -X DELETE repos/o/r/git/refs/heads/x')).toContain('read-only')
+  expect(checkWorkerCall('subagent-gateway:log-reader', 'Bash', 'gh api --method PATCH repos/o/r')).toContain('read-only')
   expect(checkWorkerCall('subagent-gateway:repo-searcher', 'Bash', 'sed -i s/a/b/ file.ts')).toContain('read-only')
   expect(checkWorkerCall('subagent-gateway:repo-searcher', 'Bash', 'cat a > b')).toContain('one plain command')
   expect(checkWorkerCall('subagent-gateway:repo-searcher', 'Bash', 'ls && rm -rf x')).toContain('one plain command')
@@ -105,6 +111,8 @@ test('the sparkline and token text read at a glance', async () => {
 
 test('Explore subagents get Haiku, general-purpose Sonnet, pinned agents are left alone', async () => {
   expect(routeAgent('Explore')?.model).toBe('haiku')
+  expect(routeAgent('web-fetch')?.model).toBe('haiku')
+  expect(routeAgent('claude-code-guide')?.model).toBe('haiku')
   expect(routeAgent('general-purpose')?.model).toBe('sonnet')
   expect(routeAgent('planner')).toBe(null)
 })
