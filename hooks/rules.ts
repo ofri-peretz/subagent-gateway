@@ -148,16 +148,25 @@ const GH_READS = /^gh (pr (view|diff|checks|list)|run (view|list)|issue (view|li
 const GH_API_WRITES = /\s(-X|--method)\s*(?!GET\b)[A-Za-z]+|\s(-f|-F|--field|--raw-field|--input)\b/
 // Test commands test-runner may start; what they run is the project's own suite.
 const TEST_RUNS = /^(npx (cypress run|newman run|vitest run|jest)|newman run|(pnpm|npm|yarn)( run)? test|pnpm (exec )?vitest run)\b/
-// Chaining, redirection and substitution: each could hide a write behind a read.
-const SHELL_TRICKS = /[;&<>`]|\$\(|\|\|/
-const FIND_WRITES = /\s-(delete|exec|execdir|ok|fprint|fls)\b/
+// Chaining, redirection and substitution: each could hide a write behind a read. A newline is a second command.
+const SHELL_TRICKS = /[;&<>`\n\r]|\$\(|\|\|/
+const FIND_WRITES = /\s-(delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)\b/
+// Options that turn a read into a write or start another program.
+const SORT_WRITES = /\s(-[a-zA-Z]*o|--output)/
+const RG_RUNS = /\s--pre(\s|=|$)/
+const GIT_WRITES = /\s(--output|--ext-diff|--open-files-in-pager|-O)(\s|=|$)|\s-O\S/
+// uniq's second file name is where it writes.
+const uniqWrites = (args: string[]) => args.filter(arg => !arg.startsWith('-')).length > 1
 
 const isReadSegment = (segment: string) => {
   const trimmed = segment.trim()
   const [head = '', sub = ''] = trimmed.split(/\s+/)
-  if (head === 'git') return GIT_READS.has(sub)
+  if (head === 'git') return GIT_READS.has(sub) && !GIT_WRITES.test(trimmed)
   if (head === 'gh') return GH_READS.test(trimmed) && !(sub === 'api' && GH_API_WRITES.test(trimmed))
   if (head === 'find') return !FIND_WRITES.test(trimmed)
+  if (head === 'sort') return !SORT_WRITES.test(trimmed)
+  if (head === 'rg') return !RG_RUNS.test(trimmed)
+  if (head === 'uniq') return !uniqWrites(trimmed.split(/\s+/).slice(1))
 
   return READ_WORDS.has(head)
 }
