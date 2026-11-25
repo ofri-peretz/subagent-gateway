@@ -25,6 +25,9 @@ export function parsePrefix(text: string): { model: string; text: string } | nul
 // definition already pins one (planner, implementer) are left alone.
 const AGENT_MODELS: Record<string, string> = {
   Explore: 'haiku',
+  // Fetch a page or a doc and summarise it: reading work, so Haiku.
+  'web-fetch': 'haiku',
+  'claude-code-guide': 'haiku',
   'general-purpose': 'sonnet',
 }
 
@@ -140,7 +143,9 @@ export function isMcpRead(tool: string, server?: RegExp): boolean {
 // Commands a reading worker may run. git and gh only through their read subcommands.
 const READ_WORDS = new Set(['cat', 'ls', 'grep', 'rg', 'find', 'head', 'tail', 'wc', 'jq', 'sort', 'uniq', 'cut', 'tr', 'echo', 'pwd'])
 const GIT_READS = new Set(['diff', 'log', 'show', 'status', 'blame', 'ls-files', 'rev-parse', 'grep', 'merge-base'])
-const GH_READS = /^gh (pr (view|diff|checks|list)|run (view|list)|issue view)\b/
+const GH_READS = /^gh (pr (view|diff|checks|list)|run (view|list)|issue (view|list)|repo view|release (view|list)|api)\b/
+// gh api reads only when it sends no body and names no method but GET: -f/-F turn it into a POST.
+const GH_API_WRITES = /\s(-X|--method)\s*(?!GET\b)[A-Za-z]+|\s(-f|-F|--field|--raw-field|--input)\b/
 // Test commands test-runner may start; what they run is the project's own suite.
 const TEST_RUNS = /^(npx (cypress run|newman run|vitest run|jest)|newman run|(pnpm|npm|yarn)( run)? test|pnpm (exec )?vitest run)\b/
 // Chaining, redirection and substitution: each could hide a write behind a read.
@@ -151,7 +156,7 @@ const isReadSegment = (segment: string) => {
   const trimmed = segment.trim()
   const [head = '', sub = ''] = trimmed.split(/\s+/)
   if (head === 'git') return GIT_READS.has(sub)
-  if (head === 'gh') return GH_READS.test(trimmed)
+  if (head === 'gh') return GH_READS.test(trimmed) && !(sub === 'api' && GH_API_WRITES.test(trimmed))
   if (head === 'find') return !FIND_WRITES.test(trimmed)
 
   return READ_WORDS.has(head)
