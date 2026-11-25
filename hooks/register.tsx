@@ -362,6 +362,15 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const worker = WORKERS.find(one => `subagent-gateway:${one.name}` === e.subagentType)
     const id = result.agentId
+    // A resumed agent keeps its entry: it is the same run, routed as it was, and its new turn starts now.
+    if (e.resume) {
+      const known = (await read($, agents))[id]
+      if (known) {
+        await update($, agents, all => (all[id] ? { ...all, [id]: { ...all[id], at: now, base: null } } : all))
+        await refresh($)
+        return result
+      }
+    }
     await update($, agents, all => ({
       ...all,
       [id]: {
