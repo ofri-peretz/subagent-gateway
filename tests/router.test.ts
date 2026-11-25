@@ -52,6 +52,35 @@ test('reading workers run reads and refuse writes, chains and redirects', async 
   expect(checkWorkerCall('subagent-gateway:log-reader', 'Read')).toBe(null)
 })
 
+test('a read command cannot be made to write or run another program', async () => {
+  const check = (command: string) => checkWorkerCall('subagent-gateway:repo-searcher', 'Bash', command)
+  // A newline is a second command, as ; is.
+  expect(check('ls\nrm -rf src')).toContain('one plain command')
+  expect(check('ls\r\nrm -rf src')).toContain('one plain command')
+  // Options and arguments that write a file.
+  expect(check('sort -o src/config.ts notes.txt')).toContain('read-only')
+  expect(check('sort -uo out.txt notes.txt')).toContain('read-only')
+  expect(check('sort --output=out.txt notes.txt')).toContain('read-only')
+  expect(check('uniq notes.txt src/config.ts')).toContain('read-only')
+  expect(check('git diff --output=patch.diff')).toContain('read-only')
+  expect(check('git log -p --output patch.diff')).toContain('read-only')
+  expect(check('find . -fprintf out.txt %p')).toContain('read-only')
+  expect(check('find . -fprint0 out.txt')).toContain('read-only')
+  expect(check('find . -okdir rm {} +')).toContain('read-only')
+  // Options that run another program.
+  expect(check('rg --pre ./script.sh foo')).toContain('read-only')
+  expect(check('rg --pre=./script.sh foo')).toContain('read-only')
+  expect(check('git grep -O foo')).toContain('read-only')
+  expect(check('git grep --open-files-in-pager=vim foo')).toContain('read-only')
+  expect(check('git diff --ext-diff')).toContain('read-only')
+  // Their read forms still run.
+  expect(check('sort notes.txt | uniq -c')).toBe(null)
+  expect(check('uniq -c notes.txt')).toBe(null)
+  expect(check('git diff --stat main')).toBe(null)
+  expect(check('rg -n --type ts useState src')).toBe(null)
+  expect(check('find . -name "*.ts" -print')).toBe(null)
+})
+
 test('test-runner starts test commands only', async () => {
   expect(checkWorkerCall('subagent-gateway:test-runner', 'Bash', 'npx cypress run --spec cypress/e2e/login.cy.ts 2>&1 | tail -50')).toBe(null)
   expect(checkWorkerCall('subagent-gateway:test-runner', 'Bash', 'pnpm test src')).toBe(null)
