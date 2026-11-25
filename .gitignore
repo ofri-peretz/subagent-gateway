@@ -1,1 +1,3 @@
 node_modules/
+# MCP server indexes, rebuilt per session by .claude/hooks (hookset)
+.codegraph/
