@@ -52,6 +52,7 @@ const engine = (on: any, toolResult: unknown = {}) => {
   on('clock.now', () => ({ value: now }))
   on('agent.list', () => ({ value: listed.map(one => ({ ...one })) }))
   on('agent.spawn', (_: unknown, e: any) => {
+    if (e.resume) return { model: e.model ?? e.parentModel, agentId: e.resume.agentId }
     const agentId = `a${++next}`
     listed.push({ id: agentId, type: e.subagentType, description: e.description, status: 'running', ...(e.parentAgentId ? { parentId: e.parentAgentId } : {}) })
     return { model: e.model ?? (e.subagentType.startsWith('subagent-gateway:') ? 'claude-haiku-5-5' : e.parentModel), agentId }
@@ -184,6 +185,19 @@ test('a continued agent counts as one run', async ($, on) => {
   await $.turn.complete(done(undefined))
   const [day] = clock.store.get() as any[]
   expect(day.builtinRuns).toBe(1)
+})
+
+test('a resumed agent counts as one run and keeps its route', async ($, on) => {
+  const clock = engine(on)
+  const builtin = await $.agent.spawn(spawn('general-purpose', { prompt: 'find where the store is written' }))
+  await $.turn.complete(done(builtin.agentId, { input_tokens: 0, cache_creation_input_tokens: 50_000 }))
+  await $.turn.complete(done(undefined))
+  await $.agent.spawn(spawn('general-purpose', { prompt: 'and the reads?', resume: { agentId: builtin.agentId } }))
+  await $.turn.complete(done(builtin.agentId, { input_tokens: 0, cache_creation_input_tokens: 20_000 }))
+  await $.turn.complete(done(undefined))
+  const [day] = clock.store.get() as any[]
+  expect(day.builtinRuns).toBe(1)
+  expect(day.moved).toBe(70_020)
 })
 
 test('an agent\'s starting context is not counted as kept out', async ($, on) => {
