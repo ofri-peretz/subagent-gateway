@@ -89,7 +89,7 @@ The Savings pane (`/gateway`, or the Savings button) shows today, the last 7 day
 
 ## Commands and prefixes
 
-- `/gateway`: the Savings pane. `/gateway agents [word]`: the Agents view, filtered by the word. `/gateway off` and `/gateway on`: turn the workers and subagent routing off or on.
+- `/gateway`: the Savings pane. `/gateway agents [word]`: the Agents view, filtered by the word. `/gateway off` and `/gateway on`: turn the workers and subagent routing off or on. `/gateway handoff off` and `/gateway handoff on`: drop or restore only the hand-off line added beside each prompt, with workers and routing left on, to measure whether it earns its tokens.
 - Start a prompt with `o `, `s ` or `h ` to run that one prompt on Opus, Sonnet or Haiku. The next prompt goes back to your model. Past 50K tokens of context you get a warning, because the switch re-reads everything.
 
 ## Privacy and cost
