@@ -3,6 +3,8 @@
 ## Unreleased
 
 - **`/gateway handoff off|on`**: drops or restores only the hand-off line beside each prompt (about 70 tokens a turn), with workers and routing left on, so the line can be measured against its absence. On by default.
+- **`scripts/model-mix.mjs`**: which model each subagent actually ran on, counted from Claude Code's own transcripts (`subagents/agent-*.meta.json` + `.jsonl`), with tokens, Haiku share and empty runs by agent type. It replaces trusting the savings counters. Metas with no transcript are reported, not counted. First run (7 days): 542 runs, 23% on Haiku by count, about 2% by tokens; workers came back empty in 6 of 126 runs.
+
 ## 1.0.1
 
 - The seven workers ship as agent files (`agents/*.md`), so plugin listings show them; CI checks they match the rules.
