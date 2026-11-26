@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **`/gateway handoff off|on`**: drops or restores only the hand-off line beside each prompt (about 70 tokens a turn), with workers and routing left on, so the line can be measured against its absence. On by default.
 ## 1.0.1
 
 - The seven workers ship as agent files (`agents/*.md`), so plugin listings show them; CI checks they match the rules.

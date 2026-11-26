@@ -51,6 +51,9 @@ const AGENTS_PANE = 'subagent-gateway-agents'
 const entries = atom({ plugin: 'subagent-gateway', key: 'entries' } as const, [] as Entry[], { shape: 'entries-2' })
 // Turns subagent routing and the workers off; the main conversation is never routed.
 const isOff = atom({ plugin: 'subagent-gateway', key: 'isOff' } as const, false)
+// The hand-off line beside each prompt, on its own switch so it can be measured against its absence
+// while routing stays on (`/gateway handoff off`); scripts/model-mix.mjs splits runs by it.
+const isHandoffQuiet = atom({ plugin: 'subagent-gateway', key: 'isHandoffQuiet' } as const, false)
 const usage = atom({ plugin: 'subagent-gateway', key: 'usage' } as const, null as Usage | null, { shape: 'usage-1' })
 const agents = atom({ plugin: 'subagent-gateway', key: 'agents' } as const, {} as Record<string, SpawnedAgent>, { shape: 'agents-2' })
 const isCompacting = atom({ plugin: 'subagent-gateway', key: 'isCompacting' } as const, false)
@@ -533,6 +536,12 @@ export const register: Register = on => {
       return { text: `Workers and subagent routing ${arg}.` }
     }
 
+    if (arg === 'handoff off' || arg === 'handoff on') {
+      await update($, isHandoffQuiet, () => arg === 'handoff off')
+
+      return { text: `Hand-off line ${arg.slice('handoff '.length)}; workers and routing unchanged.` }
+    }
+
     if (arg === 'agents' || arg.startsWith('agents ')) {
       await update($, agentFilter, () => arg.slice('agents'.length).trim())
       await refresh($)
@@ -567,7 +576,8 @@ export const register: Register = on => {
 
     // The hand-off rule rides beside each prompt (about 70 tokens): a plugin that
     // composes first can stop a system-prompt section or a context block from arriving.
-    const context = (await read($, isOff)) ? e.context : [...(e.context ?? []), HANDOFF_RULE]
+    const quiet = (await read($, isOff)) || (await read($, isHandoffQuiet))
+    const context = quiet ? e.context : [...(e.context ?? []), HANDOFF_RULE]
 
     return next({ ...e, ...(picked ? { text: picked.text } : {}), ...(context ? { context } : {}) })
   }).catch((_$, e, next) => next(e))

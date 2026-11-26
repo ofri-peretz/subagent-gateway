@@ -247,6 +247,23 @@ test('the hand-off rule rides beside each prompt, and stays out when the gateway
   expect(contexts[1]).toBeUndefined()
 })
 
+test('/gateway handoff off drops the hand-off line but keeps routing', async ($, on) => {
+  engine(on)
+  const contexts: unknown[] = []
+  on('prompt.submit', (_: unknown, e: any) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+  on('command.register', () => ({ value: { command: 'gateway' } }))
+  expect((await $.command.run({ command: 'gateway', args: 'handoff off' } as any)).text).toBe('Hand-off line off; workers and routing unchanged.')
+  await $.prompt.submit({ text: 'where is the spec' } as any)
+  expect(contexts[0]).toBeUndefined()
+  expect((await $.agent.spawn(spawn('Explore'))).model).toBe('haiku')
+  await $.command.run({ command: 'gateway', args: 'handoff on' } as any)
+  await $.prompt.submit({ text: 'where is the spec' } as any)
+  expect((contexts[1] as string[])[0]).toContain('repo-searcher')
+})
+
 test('a look-only general-purpose task runs on Haiku', async ($, on) => {
   engine(on)
   expect((await $.agent.spawn(spawn('general-purpose', { prompt: 'Find where the checkout total is computed' }))).model).toBe('haiku')
