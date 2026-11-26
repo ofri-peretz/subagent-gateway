@@ -1,0 +1,25 @@
+{"fn": "checkWorkerCall", "args": ["subagent-gateway:repo-searcher", "Bash", "rg -n routeAgent hooks"]}
+{"fn": "checkWorkerCall", "args": ["subagent-gateway:repo-searcher", "Bash", "rg --pre cat x"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "git log --oneline -5"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "git log --output=/tmp/x"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "git push origin main"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "cat a.txt | sort | uniq -c"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "sort -o out.txt in.txt"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "uniq in.txt out.txt"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "find . -name '*.ts' -delete"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "ls && rm -rf x"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "echo $(whoami)"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "gh pr view 12"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "gh api repos/o/r/pulls"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Bash", "gh api -X POST repos/o/r/issues -f title=x"]}
+{"fn": "checkWorkerCall", "args": ["test-runner", "Bash", "npx vitest run tests/router.test.ts 2>&1"]}
+{"fn": "checkWorkerCall", "args": ["test-runner", "Bash", "npm test | tail -20"]}
+{"fn": "checkWorkerCall", "args": ["test-runner", "Bash", "npm install left-pad"]}
+{"fn": "checkWorkerCall", "args": ["repo-searcher", "Edit", null]}
+{"fn": "checkWorkerCall", "args": ["ticket-reader", "mcp__atlassian__getJiraIssue", null]}
+{"fn": "checkWorkerCall", "args": ["ticket-reader", "mcp__atlassian__createJiraIssue", null]}
+{"fn": "checkWorkerCall", "args": ["ticket-reader", "mcp__slack__slack_read_thread", null]}
+{"fn": "checkWorkerCall", "args": ["mcp-reader", "mcp__slack__slack_read_thread", null]}
+{"fn": "checkWorkerCall", "args": ["mcp-reader", "mcp__slack__slack_send_message", null]}
+{"fn": "checkWorkerCall", "args": ["mcp-reader", "mcp__github__list_pull_requests", null]}
+{"fn": "checkWorkerCall", "args": ["mcp-reader", "Read", null]}

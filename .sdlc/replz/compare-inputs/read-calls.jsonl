@@ -1,0 +1,19 @@
+{"fn": "isReadCall", "args": ["Read", null]}
+{"fn": "isReadCall", "args": ["Grep", null]}
+{"fn": "isReadCall", "args": ["Bash", "cd src && rg foo"]}
+{"fn": "isReadCall", "args": ["Bash", "X=1; cat a | head"]}
+{"fn": "isReadCall", "args": ["Bash", "cat a > b"]}
+{"fn": "isReadCall", "args": ["Bash", "npm test 2>&1"]}
+{"fn": "isReadCall", "args": ["Bash", "git status 2>/dev/null"]}
+{"fn": "isReadCall", "args": ["mcp__notion__notion-search", null]}
+{"fn": "isReadCall", "args": ["mcp__notion__notion-create-pages", null]}
+{"fn": "isReadCall", "args": ["Edit", null]}
+{"fn": "workerFor", "args": ["Read"]}
+{"fn": "workerFor", "args": ["mcp__atlassian__getJiraIssue"]}
+{"fn": "workerFor", "args": ["mcp__slack__slack_search"]}
+{"fn": "workerFor", "args": ["Bash"]}
+{"fn": "isMcpRead", "args": ["mcp__github__get_me"]}
+{"fn": "isMcpRead", "args": ["mcp__github__merge_pull_request"]}
+{"fn": "isMcpRead", "args": ["mcp__x__exec"]}
+{"fn": "isMcpRead", "args": ["mcp__chrome__take_screenshot"]}
+{"fn": "isMcpRead", "args": ["Read"]}

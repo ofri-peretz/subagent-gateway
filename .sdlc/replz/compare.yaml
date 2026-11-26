@@ -1,0 +1,7 @@
+# replz compare: every routing and safety decision in hooks/rules.ts, run on the base and on this
+# PR. Each input line names an exported function and its arguments; a changed decision fails the
+# PR until it is approved below with a reason.
+command: >-
+  node --no-warnings --input-type=module -e "const r=await import(process.cwd()+'/hooks/rules.ts');let s='';for await(const c of process.stdin)s+=c;for(const l of s.split('\n').filter(Boolean)){const{fn,args}=JSON.parse(l);let out;try{out=JSON.stringify(r[fn](...args.map(a=>a===null?undefined:a)))}catch(e){out='throws '+e.message}console.log(fn+' '+JSON.stringify(args)+' => '+out)}"
+inputs: .sdlc/replz/compare-inputs
+approved: []
