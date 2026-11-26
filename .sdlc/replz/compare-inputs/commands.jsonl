@@ -1,0 +1,30 @@
+{"fn": "isCheck", "args": ["npm test"]}
+{"fn": "isHeavy", "args": ["npm test"]}
+{"fn": "isPolling", "args": ["npm test"]}
+{"fn": "isCheck", "args": ["npx vitest run"]}
+{"fn": "isHeavy", "args": ["npx vitest run"]}
+{"fn": "isPolling", "args": ["npx vitest run"]}
+{"fn": "isCheck", "args": ["pnpm install"]}
+{"fn": "isHeavy", "args": ["pnpm install"]}
+{"fn": "isPolling", "args": ["pnpm install"]}
+{"fn": "isCheck", "args": ["tsc --noEmit"]}
+{"fn": "isHeavy", "args": ["tsc --noEmit"]}
+{"fn": "isPolling", "args": ["tsc --noEmit"]}
+{"fn": "isCheck", "args": ["npm run build"]}
+{"fn": "isHeavy", "args": ["npm run build"]}
+{"fn": "isPolling", "args": ["npm run build"]}
+{"fn": "isCheck", "args": ["sleep 30"]}
+{"fn": "isHeavy", "args": ["sleep 30"]}
+{"fn": "isPolling", "args": ["sleep 30"]}
+{"fn": "isCheck", "args": ["until gh pr checks 1; do sleep 10; done"]}
+{"fn": "isHeavy", "args": ["until gh pr checks 1; do sleep 10; done"]}
+{"fn": "isPolling", "args": ["until gh pr checks 1; do sleep 10; done"]}
+{"fn": "isCheck", "args": ["cargo check"]}
+{"fn": "isHeavy", "args": ["cargo check"]}
+{"fn": "isPolling", "args": ["cargo check"]}
+{"fn": "isCheck", "args": ["ls -la"]}
+{"fn": "isHeavy", "args": ["ls -la"]}
+{"fn": "isPolling", "args": ["ls -la"]}
+{"fn": "isCheck", "args": ["yarn i"]}
+{"fn": "isHeavy", "args": ["yarn i"]}
+{"fn": "isPolling", "args": ["yarn i"]}

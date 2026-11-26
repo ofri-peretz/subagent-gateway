@@ -1,0 +1,17 @@
+{"fn": "parsePrefix", "args": ["o fix it"]}
+{"fn": "parsePrefix", "args": ["s summarise the log"]}
+{"fn": "parsePrefix", "args": ["h find usages"]}
+{"fn": "parsePrefix", "args": ["s3 bucket policy"]}
+{"fn": "parsePrefix", "args": ["O  refactor auth"]}
+{"fn": "parsePrefix", "args": ["hello"]}
+{"fn": "parsePrefix", "args": ["x do it"]}
+{"fn": "parsePrefix", "args": [""]}
+{"fn": "routeAgent", "args": ["Explore"]}
+{"fn": "routeAgent", "args": ["web-fetch"]}
+{"fn": "routeAgent", "args": ["claude-code-guide"]}
+{"fn": "routeAgent", "args": ["general-purpose", "find where the router is defined"]}
+{"fn": "routeAgent", "args": ["general-purpose", "find and fix the router bug"]}
+{"fn": "routeAgent", "args": ["general-purpose", "list the tests; do not edit any file"]}
+{"fn": "routeAgent", "args": ["general-purpose", "write a migration"]}
+{"fn": "routeAgent", "args": ["Plan", "design the cache"]}
+{"fn": "routeAgent", "args": ["general-purpose", ""]}
