@@ -92,6 +92,7 @@ declare module 'claude-code' {
     'subagent-gateway': {
       entries: Shaped<Entry[]>
       isOff: boolean
+      isHandoffQuiet: boolean
       usage: Shaped<Usage | null>
       agents: Shaped<Record<string, SpawnedAgent>>
       isCompacting: boolean
